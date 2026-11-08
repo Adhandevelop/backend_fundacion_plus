@@ -46,6 +46,7 @@ def get_tokens_for_user(user: User) -> dict:
 class CitizenRegisterView(APIView):
     """POST /api/v1/auth/register/ — Registro ciudadano en plus.usuarios."""
     permission_classes = [permissions.AllowAny]
+    serializer_class = CitizenRegistrationSerializer
 
     def post(self, request):
         serializer = CitizenRegistrationSerializer(data=request.data)
@@ -78,6 +79,7 @@ class LoginView(APIView):
     Registra en plus.auditoria_accesos cada intento exitoso o fallido.
     """
     permission_classes = [permissions.AllowAny]
+    serializer_class = LoginSerializer
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
@@ -136,6 +138,7 @@ class MeProfileView(generics.RetrieveUpdateAPIView):
 class ChangePasswordView(APIView):
     """POST /api/v1/auth/change-password/"""
     permission_classes = [permissions.IsAuthenticated]
+    serializer_class = ChangePasswordSerializer
 
     def post(self, request):
         serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
@@ -149,6 +152,7 @@ class ChangePasswordView(APIView):
 class ClienteProfileView(APIView):
     """GET /api/clientes/me/"""
     permission_classes = [IsClientOnly]
+    serializer_class = UserMeSerializer
 
     def get(self, request):
         return Response(
@@ -164,6 +168,7 @@ class ClienteProfileView(APIView):
 class AdministrativoProfileView(APIView):
     """GET /api/administrativos/me/"""
     permission_classes = [IsAdminOrSuperAdmin]
+    serializer_class = UserMeSerializer
 
     def get(self, request):
         return Response(

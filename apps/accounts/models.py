@@ -343,12 +343,6 @@ class ResponsibleScopeAssignment(models.Model):
     class Meta:
         db_table = 'asignaciones_responsables'
         ordering = ['-fecha_asignacion']
-        constraints = [
-            models.CheckConstraint(
-                check=Q(comunidad__isnull=False) | Q(tipo_caso__isnull=False),
-                name='ck_ambito_responsable',
-            ),
-        ]
         indexes = [
             models.Index(fields=['usuario', 'activo'], name='ix_asignacion_ambito_usuario'),
             models.Index(fields=['comunidad'], name='ix_asignacion_resp_comunidad'),

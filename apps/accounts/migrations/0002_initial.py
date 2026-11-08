@@ -42,10 +42,6 @@ class Migration(migrations.Migration):
             model_name='responsiblescopeassignment',
             index=models.Index(fields=['tipo_caso'], name='ix_asignacion_resp_tipo'),
         ),
-        migrations.AddConstraint(
-            model_name='responsiblescopeassignment',
-            constraint=models.CheckConstraint(check=models.Q(('comunidad__isnull', False), ('tipo_caso__isnull', False), _connector='OR'), name='ck_ambito_responsable'),
-        ),
         migrations.AddIndex(
             model_name='user',
             index=models.Index(fields=['rol'], name='ix_usuarios_rol'),
