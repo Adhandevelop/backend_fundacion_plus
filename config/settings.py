@@ -85,44 +85,42 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 ASGI_APPLICATION = 'config.asgi.application'
 
-# Database Configuration (Supports DATABASE_URL from docker-compose, DB_* vars, or SQLite fallback)
+# Database Configuration (Supports DB_ENGINE=postgis/postgresql from docker-compose, DATABASE_URL, or SQLite fallback)
 DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
-DB_ENGINE = os.getenv('DB_ENGINE', 'sqlite3').strip()
+DB_ENGINE = os.getenv('DB_ENGINE', 'sqlite3').strip().lower()
+USE_GEODJANGO = os.getenv('USE_GEODJANGO', 'false').lower() in ('true', '1', 'yes')
 
 if DATABASE_URL:
     parsed = urlparse(DATABASE_URL)
-    scheme = parsed.scheme.lower()
-    use_postgis_engine = scheme in ('postgis', 'postgres+postgis') or os.getenv('USE_GEODJANGO', 'false').lower() == 'true'
     DATABASES = {
         'default': {
             'ENGINE': (
                 'django.contrib.gis.db.backends.postgis'
-                if use_postgis_engine
+                if USE_GEODJANGO
                 else 'django.db.backends.postgresql'
             ),
             'NAME': parsed.path.lstrip('/'),
             'USER': unquote(parsed.username or ''),
             'PASSWORD': unquote(parsed.password or ''),
-            'HOST': parsed.hostname or 'database',
+            'HOST': parsed.hostname or 'db',
             'PORT': str(parsed.port or 5432),
             'OPTIONS': {
                 'options': f"-c search_path={os.getenv('DB_SCHEMA', 'plus,public')}"
             },
         }
     }
-elif DB_ENGINE in ('postgresql', 'postgis', 'django.db.backends.postgresql', 'django.contrib.gis.db.backends.postgis'):
-    resolved_engine = (
-        'django.contrib.gis.db.backends.postgis'
-        if DB_ENGINE in ('postgis', 'django.contrib.gis.db.backends.postgis')
-        else 'django.db.backends.postgresql'
-    )
+elif DB_ENGINE in ('postgresql', 'postgis', 'postgres', 'django.db.backends.postgresql', 'django.contrib.gis.db.backends.postgis'):
     DATABASES = {
         'default': {
-            'ENGINE': resolved_engine,
+            'ENGINE': (
+                'django.contrib.gis.db.backends.postgis'
+                if USE_GEODJANGO
+                else 'django.db.backends.postgresql'
+            ),
             'NAME': os.getenv('DB_NAME') or os.getenv('POSTGRES_DB', 'plus_db'),
             'USER': os.getenv('DB_USER') or os.getenv('POSTGRES_USER', 'postgres'),
             'PASSWORD': os.getenv('DB_PASSWORD') or os.getenv('POSTGRES_PASSWORD', 'postgres'),
-            'HOST': os.getenv('DB_HOST', 'database'),
+            'HOST': os.getenv('DB_HOST', 'db'),
             'PORT': os.getenv('DB_PORT', '5432'),
             'OPTIONS': {
                 'options': f"-c search_path={os.getenv('DB_SCHEMA', 'plus,public')}"

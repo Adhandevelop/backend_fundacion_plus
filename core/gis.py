@@ -125,6 +125,9 @@ class PostGISPointField(models.Field):
     """
     description = 'PostGIS geometry(Point, 4326)'
 
+    def get_internal_type(self):
+        return 'JSONField'
+
     def db_type(self, connection):
         if connection.vendor == 'postgresql':
             return 'geometry(Point,4326)'
@@ -152,6 +155,9 @@ class PostGISMultiPolygonField(models.Field):
     or TEXT in SQLite. Accepts NULL or EWKT/GeoJSON.
     """
     description = 'PostGIS geometry(MultiPolygon, 4326)'
+
+    def get_internal_type(self):
+        return 'JSONField'
 
     def db_type(self, connection):
         if connection.vendor == 'postgresql':
