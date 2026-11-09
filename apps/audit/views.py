@@ -1,5 +1,6 @@
 from django.shortcuts import get_object_or_404
-from rest_framework import mixins, viewsets
+from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema, inline_serializer
+from rest_framework import mixins, serializers as drf_serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -68,11 +69,50 @@ class AdminAuditLogViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
 
 class AdminAuditEventListView(APIView):
     """
-    AUD-01: GET /api/v1/admin/audit-events/
+    AUD-01: GET /api/v1/admin/audit-events/ (y /api/v1/admin/audit/events/)
     Proyección unificada de las 5 tablas de auditoría con referencia `event_ref` (`{source}:{uuid}`).
     """
     permission_classes = [IsAdminOrSuperAdmin]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('source', OpenApiTypes.STR, description='Fuente: eventos, accesos, casos, permisos, seguridad'),
+            OpenApiParameter('actor', OpenApiTypes.UUID, description='Filtrar por UUID de usuario actor'),
+            OpenApiParameter('action', OpenApiTypes.STR, description='Filtrar por tipo de acción'),
+        ],
+        responses={
+            200: inline_serializer(
+                name='AdminAuditEventListResponse',
+                fields={
+                    'kpis': drf_serializers.DictField(),
+                    'count': drf_serializers.IntegerField(),
+                    'results': drf_serializers.ListField(
+                        child=inline_serializer(
+                            name='UnifiedAuditEventItem',
+                            fields={
+                                'event_ref': drf_serializers.CharField(),
+                                'id': drf_serializers.UUIDField(),
+                                'source': drf_serializers.CharField(),
+                                'action': drf_serializers.CharField(),
+                                'module': drf_serializers.CharField(),
+                                'entity': drf_serializers.CharField(allow_null=True),
+                                'entity_id': drf_serializers.CharField(allow_null=True),
+                                'actor': drf_serializers.UUIDField(allow_null=True),
+                                'actor_nombre': drf_serializers.CharField(allow_null=True),
+                                'result': drf_serializers.CharField(),
+                                'description': drf_serializers.CharField(allow_null=True),
+                                'changed_columns': drf_serializers.ListField(
+                                    child=drf_serializers.CharField(), allow_null=True
+                                ),
+                                'timestamp': drf_serializers.DateTimeField(),
+                            },
+                        )
+                    ),
+                },
+            )
+        },
+        summary='Listado unificado de las 5 fuentes de auditoría con KPIs y filtros (AUD-01)',
+    )
     def get(self, request):
         params = request.query_params
         source_filter = (params.get('source') or params.get('fuente') or '').strip().lower()
@@ -215,6 +255,10 @@ class AdminAuditEventDetailView(APIView):
     """
     permission_classes = [IsAdminOrSuperAdmin]
 
+    @extend_schema(
+        responses={200: AuditLogSerializer},
+        summary='Detalle de evento de auditoría por referencia {source}:{uuid} o UUID (AUD-02)',
+    )
     def get(self, request, event_ref: str = None, event_id: str = None):
         event_ref = str(event_ref or event_id or '')
         if ':' in event_ref:

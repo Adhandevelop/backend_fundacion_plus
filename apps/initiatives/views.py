@@ -1,7 +1,8 @@
 import uuid as uuid_lib
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
-from rest_framework import generics, permissions, viewsets
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import generics, permissions, serializers as drf_serializers, viewsets
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -50,6 +51,17 @@ class PublicInitiativeCategoryListView(APIView):
     """
     permission_classes = [permissions.AllowAny]
 
+    @extend_schema(
+        responses={
+            200: inline_serializer(
+                name='PublicInitiativeCategoriesResponse',
+                fields={
+                    'categories': drf_serializers.ListField(child=drf_serializers.CharField()),
+                },
+            )
+        },
+        summary='Categorías distintas de iniciativas publicadas (CAT-08)',
+    )
     def get(self, request):
         cats = list(
             dict.fromkeys(

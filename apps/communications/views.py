@@ -2,7 +2,8 @@ from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework import generics, permissions, status, viewsets
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import generics, permissions, serializers as drf_serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -54,6 +55,32 @@ class MeConversationListView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={
+            200: inline_serializer(
+                name='MeConversationListResponse',
+                fields={
+                    'count': drf_serializers.IntegerField(),
+                    'results': drf_serializers.ListField(
+                        child=inline_serializer(
+                            name='ConversationSummaryItem',
+                            fields={
+                                'id_caso': drf_serializers.UUIDField(allow_null=True),
+                                'caso_codigo': drf_serializers.CharField(allow_null=True),
+                                'caso_titulo': drf_serializers.CharField(allow_null=True),
+                                'contraparte_id': drf_serializers.UUIDField(),
+                                'contraparte_nombre': drf_serializers.CharField(),
+                                'ultimo_mensaje': drf_serializers.CharField(),
+                                'fecha_ultimo_mensaje': drf_serializers.DateTimeField(),
+                                'unread_count': drf_serializers.IntegerField(),
+                            },
+                        )
+                    ),
+                },
+            )
+        },
+        summary='Listar conversaciones privadas agrupadas por caso y contraparte (MSG-01)',
+    )
     def get(self, request):
         user = request.user
         msgs = (
@@ -174,9 +201,52 @@ class CasePrivateMessageMarkReadView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=inline_serializer(
+            name='MarkMessagesReadRequest',
+            fields={
+                'message_ids': drf_serializers.ListField(
+                    child=drf_serializers.UUIDField(),
+                    required=False,
+                    help_text='Lista opcional de UUIDs de mensajes recibidos a marcar como leídos.',
+                )
+            },
+        ),
+        responses={
+            200: inline_serializer(
+                name='MarkMessagesReadResponse',
+                fields={
+                    'marked_read': drf_serializers.IntegerField(),
+                    'unread_remaining': drf_serializers.IntegerField(),
+                },
+            )
+        },
+        summary='Marcar mensajes privados recibidos como leídos (MSG-04)',
+    )
     def post(self, request, case_id):
         return self.put(request, case_id)
 
+    @extend_schema(
+        request=inline_serializer(
+            name='MarkMessagesReadPutRequest',
+            fields={
+                'message_ids': drf_serializers.ListField(
+                    child=drf_serializers.UUIDField(),
+                    required=False,
+                )
+            },
+        ),
+        responses={
+            200: inline_serializer(
+                name='MarkMessagesReadPutResponse',
+                fields={
+                    'marked_read': drf_serializers.IntegerField(),
+                    'unread_remaining': drf_serializers.IntegerField(),
+                },
+            )
+        },
+        summary='Marcar mensajes privados recibidos como leídos (MSG-04)',
+    )
     def put(self, request, case_id):
         case = resolve_case_by_ref(Case.objects.all(), case_id)
         qs = case.mensajes_privados.filter(destinatario=request.user, fecha_lectura__isnull=True)
@@ -253,6 +323,7 @@ class AdminCaseCommentModerationViewSet(viewsets.ModelViewSet):
 
         prev_status = comment.estado_moderacion
         new_status = serializer.validated_data['resolved_status']
+        motivo = serializer.validated_data.get('resolved_motivo', '')
         AuditService.set_db_actor_session(request.user)
         comment.estado_moderacion = new_status
         comment.save(update_fields=['estado_moderacion'])
@@ -264,23 +335,38 @@ class AdminCaseCommentModerationViewSet(viewsets.ModelViewSet):
             target_model='comentarios',
             target_id=comment.pk,
             description=f'Moderación de comentario en {comment.caso.codigo}: {prev_status} -> {new_status}',
+            previous_data={'estado_moderacion': prev_status},
+            new_data={'estado_moderacion': new_status, 'motivo': motivo},
             request=request,
         )
 
+        msg_text = f'Tu comentario fue marcado como {comment.estado_moderacion}.'
+        if motivo:
+            msg_text += f' Motivo: {motivo}'
         NotificationService.notify(
             recipient=comment.usuario,
             notification_type='comentario_moderado',
             title=f'Revisión de tu comentario en {comment.caso.codigo}',
-            message=f'Tu comentario fue marcado como {comment.estado_moderacion}.',
+            message=msg_text,
             related_case=comment.caso,
         )
         return Response(CaseCommentSerializer(comment).data)
 
+    @extend_schema(
+        request=CommentModerationActionSerializer,
+        responses={200: CaseCommentSerializer},
+        summary='Aprobar, rechazar u ocultar un comentario y guardar motivo en auditoría',
+    )
     @action(detail=True, methods=['post'], url_path='moderation')
     def moderation(self, request, pk=None):
         """Sección 14: POST /api/v1/admin/comments/{id}/moderation/"""
         return self._apply_moderation(request)
 
+    @extend_schema(
+        request=CommentModerationActionSerializer,
+        responses={200: CaseCommentSerializer},
+        summary='Alias compatible para moderar un comentario',
+    )
     @action(detail=True, methods=['post'], url_path='moderate')
     def moderate(self, request, pk=None):
         """Alias compatible con POST /api/v1/admin/comments/{id}/moderate/"""
@@ -321,6 +407,19 @@ class PublicSiteInfoView(APIView):
     """
     permission_classes = [permissions.AllowAny]
 
+    @extend_schema(
+        responses={
+            200: inline_serializer(
+                name='PublicSiteInfoResponse',
+                fields={
+                    'institucion': drf_serializers.JSONField(),
+                    'configuracion': drf_serializers.DictField(),
+                    'documentos_legales': LegalDocumentSerializer(many=True),
+                },
+            )
+        },
+        summary='Información institucional pública y políticas vigentes (PUB-01)',
+    )
     def get(self, request):
         settings_qs = SiteSetting.objects.filter(clave__in=PUBLIC_SITE_SETTING_KEYS)
         settings_map = {s.clave: s.valor for s in settings_qs}

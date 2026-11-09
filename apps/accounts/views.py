@@ -1,11 +1,13 @@
 import os
+from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.core.files.storage import default_storage
 from django.db import transaction
 from django.db.models import Q
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
-from rest_framework import generics, permissions, status, viewsets
+from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema, inline_serializer
+from rest_framework import generics, permissions, serializers as drf_serializers, status, viewsets
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -51,11 +53,33 @@ def get_tokens_for_user(user: User) -> dict:
     refresh['roles'] = user.get_role_codes()
     refresh['primary_role'] = user.get_primary_role()
     token_obj, _ = Token.objects.get_or_create(user=user)
+    jwt_cfg = getattr(settings, 'SIMPLE_JWT', {})
+    access_lifetime = jwt_cfg.get('ACCESS_TOKEN_LIFETIME')
+    refresh_lifetime = jwt_cfg.get('REFRESH_TOKEN_LIFETIME')
     return {
         'access': str(refresh.access_token),
         'refresh': str(refresh),
         'token': token_obj.key,
+        'token_type': 'Bearer',
+        'expires_in': int(access_lifetime.total_seconds()) if access_lifetime else 3600,
+        'refresh_expires_in': int(refresh_lifetime.total_seconds()) if refresh_lifetime else 604800,
     }
+
+
+AuthSessionResponseSerializer = inline_serializer(
+    name='AuthSessionResponse',
+    fields={
+        'access': drf_serializers.CharField(help_text='Token JWT de acceso (Bearer).'),
+        'refresh': drf_serializers.CharField(help_text='Token JWT de renovación.'),
+        'token': drf_serializers.CharField(help_text='Token de sesión revocable en servidor.'),
+        'token_type': drf_serializers.CharField(default='Bearer'),
+        'expires_in': drf_serializers.IntegerField(help_text='Segundos de vigencia del access token.'),
+        'refresh_expires_in': drf_serializers.IntegerField(help_text='Segundos de vigencia del refresh token.'),
+        'primary_role': drf_serializers.CharField(required=False),
+        'roles': drf_serializers.ListField(child=drf_serializers.CharField(), required=False),
+        'user': UserMeSerializer(),
+    },
+)
 
 
 class CitizenRegisterView(APIView):
@@ -63,6 +87,11 @@ class CitizenRegisterView(APIView):
     permission_classes = [permissions.AllowAny]
     serializer_class = CitizenRegistrationSerializer
 
+    @extend_schema(
+        request=CitizenRegistrationSerializer,
+        responses={201: AuthSessionResponseSerializer},
+        summary='Registro de cuenta ciudadana (AUTH-01)',
+    )
     def post(self, request):
         serializer = CitizenRegistrationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -82,6 +111,8 @@ class CitizenRegisterView(APIView):
         return Response(
             {
                 **tokens,
+                'primary_role': user.get_primary_role(),
+                'roles': user.get_role_codes(),
                 'user': UserMeSerializer(user).data,
             },
             status=status.HTTP_201_CREATED,
@@ -96,6 +127,11 @@ class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
     serializer_class = LoginSerializer
 
+    @extend_schema(
+        request=LoginSerializer,
+        responses={200: AuthSessionResponseSerializer},
+        summary='Inicio de sesión JWT + perfil de usuario (AUTH-02)',
+    )
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         attempted = (
@@ -142,9 +178,27 @@ class LoginView(APIView):
 
 
 class LogoutView(APIView):
-    """AUTH-04: POST /api/v1/auth/logout/ — Cierra sesión y revoca Token de API."""
+    """AUTH-04: POST /api/v1/auth/logout/ — Cierra sesión, revoca Token en servidor e invalida refresh."""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=inline_serializer(
+            name='LogoutRequest',
+            fields={
+                'refresh': drf_serializers.CharField(
+                    required=False,
+                    help_text='Token JWT refresh opcional para invalidar.',
+                ),
+            },
+        ),
+        responses={
+            200: inline_serializer(
+                name='LogoutResponse',
+                fields={'message': drf_serializers.CharField()},
+            )
+        },
+        summary='Cierre de sesión e invalidación de token en servidor (AUTH-04)',
+    )
     def post(self, request):
         Token.objects.filter(user=request.user).delete()
         AuditService.log_access(
@@ -260,10 +314,39 @@ class MeProfileView(generics.RetrieveUpdateAPIView):
 class MePhotoView(APIView):
     """ME-03 y ME-04: PUT / POST / DELETE /api/v1/me/photo/"""
     permission_classes = [permissions.IsAuthenticated]
+    serializer_class = UserProfileSerializer
 
+    @extend_schema(
+        request=inline_serializer(
+            name='MePhotoUploadRequest',
+            fields={
+                'photo': drf_serializers.ImageField(
+                    required=False,
+                    help_text='Archivo de imagen (JPG, PNG o WEBP, máx. 15 MB). También acepta el nombre de campo `foto` o `file`.',
+                ),
+                'foto': drf_serializers.ImageField(required=False),
+            },
+        ),
+        responses={200: UserProfileSerializer},
+        summary='Subir o actualizar fotografía de perfil (ME-03)',
+    )
     def post(self, request):
         return self.put(request)
 
+    @extend_schema(
+        request=inline_serializer(
+            name='MePhotoPutRequest',
+            fields={
+                'photo': drf_serializers.ImageField(
+                    required=False,
+                    help_text='Archivo de imagen (JPG, PNG o WEBP, máx. 15 MB). También acepta el nombre de campo `foto` o `file`.',
+                ),
+                'foto': drf_serializers.ImageField(required=False),
+            },
+        ),
+        responses={200: UserProfileSerializer},
+        summary='Subir o actualizar fotografía de perfil (ME-03)',
+    )
     def put(self, request):
         uploaded = request.FILES.get('photo') or request.FILES.get('foto') or request.FILES.get('file')
         if not uploaded:
@@ -284,6 +367,10 @@ class MePhotoView(APIView):
         profile.save()
         return Response(UserProfileSerializer(profile).data, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        responses={204: None},
+        summary='Eliminar fotografía de perfil (ME-04)',
+    )
     def delete(self, request):
         profile, _ = UserProfile.objects.get_or_create(usuario=request.user)
         profile.ruta_foto = None
@@ -473,6 +560,11 @@ class AdminUserViewSet(viewsets.ModelViewSet):
 
         return Response(UserMeSerializer(target_user).data, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        request=AssignUserRoleSerializer,
+        responses={200: UserMeSerializer},
+        summary='Asignar rol único al usuario (USR-05)',
+    )
     @action(detail=True, methods=['put', 'post'], url_path='role')
     @transaction.atomic
     def change_single_role(self, request, pk=None):
@@ -480,6 +572,11 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         target_user = self.get_object()
         return self._apply_role_change(request, target_user)
 
+    @extend_schema(
+        request=AssignUserRoleSerializer,
+        responses={200: UserMeSerializer},
+        summary='Consultar o actualizar rol y ámbitos del usuario',
+    )
     @action(detail=True, methods=['get', 'post', 'put'], url_path='roles')
     @transaction.atomic
     def manage_roles(self, request, pk=None):
@@ -495,6 +592,11 @@ class AdminUserViewSet(viewsets.ModelViewSet):
             })
         return self._apply_role_change(request, target_user)
 
+    @extend_schema(
+        request=AdminUserStatusSerializer,
+        responses={200: UserMeSerializer},
+        summary='Cambiar estado del usuario: activo, suspendido, inactivo (USR-06)',
+    )
     @action(detail=True, methods=['patch'], url_path='status')
     @transaction.atomic
     def change_status(self, request, pk=None):

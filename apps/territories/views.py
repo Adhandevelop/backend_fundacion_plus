@@ -1,4 +1,5 @@
 from rest_framework import generics, permissions, viewsets
+from rest_framework.views import APIView
 from apps.accounts.permissions import IsAdminOrSuperAdmin
 from apps.audit.services import AuditService
 from apps.territories.models import Community, Department, Municipality
@@ -131,9 +132,10 @@ class PublicCommunityListView(generics.ListAPIView):
         return qs
 
 
-class PublicBasinListView(generics.GenericAPIView):
+class PublicBasinListView(APIView):
     """CAT-04: GET /api/v1/catalogs/basins/ — Pendiente de fuente oficial AMP-13; responde lista vacía controlada."""
     permission_classes = [permissions.AllowAny]
+    serializer_class = CommunitySerializer
 
     def get(self, request):
         from rest_framework.response import Response
@@ -143,6 +145,7 @@ class PublicBasinListView(generics.GenericAPIView):
 class AdminBasinViewSet(viewsets.ViewSet):
     """CRUD /api/v1/admin/basins/ — Pendiente de fuente oficial AMP-13; responde lista vacía controlada."""
     permission_classes = [IsAdminOrSuperAdmin]
+    serializer_class = CommunitySerializer
 
     def list(self, request):
         from rest_framework.response import Response

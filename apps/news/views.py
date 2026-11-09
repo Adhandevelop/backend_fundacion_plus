@@ -1,6 +1,7 @@
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
-from rest_framework import generics, permissions, viewsets
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import generics, permissions, serializers as drf_serializers, viewsets
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -125,6 +126,21 @@ class PublicHomeSummaryView(APIView):
     """
     permission_classes = [permissions.AllowAny]
 
+    @extend_schema(
+        responses={
+            200: inline_serializer(
+                name='PublicHomeSummaryResponse',
+                fields={
+                    'institution': drf_serializers.DictField(),
+                    'verified_indicators': drf_serializers.DictField(),
+                    'featured_initiatives': InitiativeListSerializer(many=True),
+                    'recent_news': NewsArticleListSerializer(many=True),
+                    'site_settings': drf_serializers.DictField(),
+                },
+            )
+        },
+        summary='Resumen de portada institucional, indicadores verificados, iniciativas y noticias (PUB-02)',
+    )
     def get(self, request):
         approved_cases = Case.objects.filter(estado_publicacion=Case.EstadoPublicacion.APROBADO)
         published_initiatives = Initiative.objects.filter(
@@ -180,6 +196,21 @@ class AdminMetricsDashboardView(APIView):
     """
     permission_classes = [IsResponsibleOrAdmin]
 
+    @extend_schema(
+        responses={
+            200: inline_serializer(
+                name='AdminMetricsDashboardResponse',
+                fields={
+                    'cases': drf_serializers.DictField(),
+                    'moderation_queues': drf_serializers.DictField(),
+                    'territories': drf_serializers.DictField(),
+                    'content': drf_serializers.DictField(),
+                    'users': drf_serializers.DictField(),
+                },
+            )
+        },
+        summary='Indicadores operativos del Dashboard Administrativo (ADM-01)',
+    )
     def get(self, request):
         cases_by_pub = dict(
             Case.objects.values_list('estado_publicacion').annotate(total=Count('id'))

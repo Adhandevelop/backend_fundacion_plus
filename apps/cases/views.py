@@ -1,11 +1,13 @@
 import csv
 import uuid as uuid_lib
 from django.core.exceptions import PermissionDenied
+from django.core.files.storage import default_storage
 from django.db.models import Count, Q
-from django.http import HttpResponse
+from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework import generics, permissions, status, viewsets
+from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema, inline_serializer
+from rest_framework import generics, permissions, serializers as drf_serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -26,6 +28,8 @@ from apps.cases.serializers import (
     CaseAssignResponsibleSerializer,
     CaseCategorySerializer,
     CaseContributionSerializer,
+    CaseCorrectionRequestCreateSerializer,
+    CaseCorrectionRequestSerializer,
     CaseEvidenceSerializer,
     CaseEvidenceUpdateSerializer,
     CaseManagementStatusSerializer,
@@ -33,7 +37,9 @@ from apps.cases.serializers import (
     CaseStatusSerializer,
     CaseUpdateCreateSerializer,
     CitizenCaseCreateUpdateSerializer,
+    CitizenContributionCreateSerializer,
     FollowedCaseSerializer,
+    GeoJSONCaseFeatureCollectionSerializer,
     PublicCaseDetailSerializer,
     PublicCaseListSerializer,
 )
@@ -75,6 +81,18 @@ class PublicCaseCategoryNamesView(APIView):
     """
     permission_classes = [permissions.AllowAny]
 
+    @extend_schema(
+        responses={
+            200: inline_serializer(
+                name='PublicCaseCategoryNamesResponse',
+                fields={
+                    'categories': drf_serializers.ListField(child=drf_serializers.CharField()),
+                    'tipos_caso': CaseCategorySerializer(many=True),
+                },
+            )
+        },
+        summary='Categorías temáticas y tipos de caso activos (CAT-05)',
+    )
     def get(self, request):
         active_types = CaseCategory.objects.filter(activo=True).order_by('categoria', 'nombre')
         categories = list(dict.fromkeys(active_types.values_list('categoria', flat=True)))
@@ -91,6 +109,24 @@ class PublicCaseOptionsView(APIView):
     """
     permission_classes = [permissions.AllowAny]
 
+    @extend_schema(
+        responses={
+            200: inline_serializer(
+                name='PublicCaseOptionsResponse',
+                fields={
+                    'tipos_caso': CaseCategorySerializer(many=True),
+                    'categorias': drf_serializers.ListField(child=drf_serializers.CharField()),
+                    'estados_caso': CaseStatusSerializer(many=True),
+                    'prioridades': drf_serializers.ListField(child=drf_serializers.DictField()),
+                    'estados_publicacion': drf_serializers.ListField(child=drf_serializers.DictField()),
+                    'naturalezas': drf_serializers.ListField(child=drf_serializers.DictField()),
+                    'audiencias_seguimiento': drf_serializers.ListField(child=drf_serializers.DictField()),
+                    'tipos_evento_seguimiento': drf_serializers.ListField(child=drf_serializers.DictField()),
+                },
+            )
+        },
+        summary='Opciones maestras de casos: tipos, estados, prioridades y audiencias (CAT-06)',
+    )
     def get(self, request):
         active_types = CaseCategory.objects.filter(activo=True).order_by('categoria', 'nombre')
         statuses = CaseStatus.objects.all().order_by('orden')
@@ -140,13 +176,30 @@ def apply_public_case_filters(qs, params):
 
 class PublicCaseMapGeoJSONView(APIView):
     """
-    MAP-02: GET /api/v1/public/cases/map/
+    MAP-02: GET /api/v1/public/cases/map/ (y /api/v1/public/cases/geojson/)
     Retorna un GeoJSON FeatureCollection (SRID 4326) de los casos con `estado_publicacion='aprobado'`.
     Generaliza las coordenadas (`public_location`) para proteger ubicaciones sensibles (base de datos.md línea 60).
     """
     permission_classes = [permissions.AllowAny]
-    serializer_class = PublicCaseListSerializer
+    serializer_class = GeoJSONCaseFeatureCollectionSerializer
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('bbox', OpenApiTypes.STR, description='Bounding box: minLon,minLat,maxLon,maxLat (SRID 4326)'),
+            OpenApiParameter('id_departamento', OpenApiTypes.UUID, description='Filtrar por departamento'),
+            OpenApiParameter('id_municipio', OpenApiTypes.UUID, description='Filtrar por municipio'),
+            OpenApiParameter('id_comunidad', OpenApiTypes.UUID, description='Filtrar por comunidad'),
+            OpenApiParameter('id_tipo_caso', OpenApiTypes.UUID, description='Filtrar por tipo de caso'),
+            OpenApiParameter('categoria', OpenApiTypes.STR, description='Filtrar por categoría temática textual'),
+            OpenApiParameter('naturaleza', OpenApiTypes.STR, description='Filtrar por naturaleza (problematica, proyecto_iniciativa, otro)'),
+            OpenApiParameter('id_estado', OpenApiTypes.UUID, description='Filtrar por UUID de estado operativo'),
+            OpenApiParameter('estado', OpenApiTypes.STR, description='Filtrar por nombre de estado operativo'),
+            OpenApiParameter('prioridad', OpenApiTypes.STR, description='Filtrar por prioridad (baja, media, alta, critica)'),
+            OpenApiParameter('search', OpenApiTypes.STR, description='Búsqueda por código, título o descripción'),
+        ],
+        responses={200: GeoJSONCaseFeatureCollectionSerializer},
+        summary='Capa GeoJSON FeatureCollection de casos públicos aprobados (MAP-02)',
+    )
     def get(self, request):
         qs = (
             Case.objects.filter(estado_publicacion=Case.EstadoPublicacion.APROBADO)
@@ -243,6 +296,20 @@ class PublicCaseHistoryView(APIView):
     """
     permission_classes = [permissions.AllowAny]
 
+    @extend_schema(
+        responses={
+            200: inline_serializer(
+                name='PublicCaseHistoryResponse',
+                fields={
+                    'id_caso': drf_serializers.UUIDField(),
+                    'codigo': drf_serializers.CharField(),
+                    'seguimientos': PublicCaseUpdateSerializer(many=True),
+                    'historial_estados': PublicCaseStatusHistorySerializer(many=True),
+                },
+            )
+        },
+        summary='Historial público de seguimientos autorizados y cambios de estado (MAP-04)',
+    )
     def get(self, request, case_id):
         qs = Case.objects.filter(estado_publicacion=Case.EstadoPublicacion.APROBADO)
         case = resolve_case_by_ref(qs, case_id)
@@ -263,6 +330,10 @@ class PublicCaseEvidenceView(APIView):
     """
     permission_classes = [permissions.AllowAny]
 
+    @extend_schema(
+        responses={200: CaseEvidenceSerializer(many=True)},
+        summary='Listado de evidencias públicas aprobadas de un caso (MAP-05)',
+    )
     def get(self, request, case_id):
         qs = Case.objects.filter(estado_publicacion=Case.EstadoPublicacion.APROBADO)
         case = resolve_case_by_ref(qs, case_id)
@@ -329,6 +400,25 @@ class CitizenDashboardView(APIView):
     """CIT-01: GET /api/v1/me/dashboard/ (y /api/v1/citizen/dashboard/)"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={
+            200: inline_serializer(
+                name='CitizenDashboardResponse',
+                fields={
+                    'total_cases': drf_serializers.IntegerField(),
+                    'pendientes_publicacion': drf_serializers.IntegerField(),
+                    'aprobados_publicacion': drf_serializers.IntegerField(),
+                    'en_gestion': drf_serializers.IntegerField(),
+                    'resueltos_o_cerrados': drf_serializers.IntegerField(),
+                    'open_correction_requests': drf_serializers.IntegerField(),
+                    'unread_notifications': drf_serializers.IntegerField(),
+                    'unread_messages': drf_serializers.IntegerField(),
+                    'followed_cases_count': drf_serializers.IntegerField(),
+                },
+            )
+        },
+        summary='Resumen del panel ciudadano autenticado (CIT-01)',
+    )
     def get(self, request):
         my_cases = Case.objects.filter(usuario=request.user)
         unread_notifications = request.user.notificaciones.filter(leida=False).count()
@@ -435,6 +525,11 @@ class CitizenCaseViewSet(viewsets.ModelViewSet):
         """Alias compatible con GET /api/v1/me/cases/{case_id}/timeline/"""
         return self.history(request, pk=pk)
 
+    @extend_schema(
+        request=CaseEvidenceSerializer,
+        responses={200: CaseEvidenceSerializer(many=True), 201: CaseEvidenceSerializer},
+        summary='Listar o subir evidencias del caso ciudadano (CIT-06)',
+    )
     @action(detail=True, methods=['get', 'post'], url_path='evidence')
     def evidence(self, request, pk=None):
         """CIT-06: GET / POST /api/v1/me/cases/{case_id}/evidence/"""
@@ -454,6 +549,13 @@ class CitizenCaseViewSet(viewsets.ModelViewSet):
         )
         return Response(CaseEvidenceSerializer(evidence).data, status=status.HTTP_201_CREATED)
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('download', OpenApiTypes.BOOL, description='Si es 1/true, descarga el binario directamente (FileResponse).'),
+        ],
+        responses={200: CaseEvidenceSerializer},
+        summary='Descargar o consultar metadatos protegidos de una evidencia (CIT-07)',
+    )
     @action(detail=True, methods=['get'], url_path=r'evidence/(?P<evidence_id>[^/.]+)/download')
     def download_evidence(self, request, pk=None, evidence_id=None):
         """CIT-07: GET /api/v1/me/cases/{case_id}/evidence/{evidence_id}/download/"""
@@ -463,15 +565,29 @@ class CitizenCaseViewSet(viewsets.ModelViewSet):
             pk=evidence_id,
             caso=case,
         )
+        if request.query_params.get('download') in ('1', 'true') and ev.ruta_archivo and default_storage.exists(ev.ruta_archivo):
+            return FileResponse(
+                default_storage.open(ev.ruta_archivo, 'rb'),
+                as_attachment=True,
+                filename=ev.nombre_original or f'evidencia_{ev.id}',
+                content_type=ev.mime_type or 'application/octet-stream',
+            )
         return Response({
             'id_evidencia': str(ev.id),
             'id_caso': str(case.id),
             'nombre_original': ev.nombre_original,
             'tipo_archivo': ev.tipo_archivo,
             'mime_type': ev.mime_type,
+            'tamano_bytes': ev.tamano_bytes,
             'ruta_archivo': ev.ruta_archivo,
+            'download_url': f'/api/v1/me/cases/{case.id}/evidence/{ev.id}/download/?download=1',
         })
 
+    @extend_schema(
+        request=CitizenContributionCreateSerializer,
+        responses={200: CaseContributionSerializer(many=True), 201: CaseContributionSerializer},
+        summary='Listar o registrar aportes ciudadanos y respuestas a corrección (CIT-08)',
+    )
     @action(detail=True, methods=['get', 'post'], url_path='contributions')
     def contributions(self, request, pk=None):
         """CIT-08 (AMP-07): GET / POST /api/v1/me/cases/{case_id}/contributions/"""
@@ -641,6 +757,11 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
         """Alias compatible con GET /api/v1/me/cases/{case_id}/timeline/"""
         return self.history(request, pk=pk)
 
+    @extend_schema(
+        request=CaseEvidenceSerializer,
+        responses={200: CaseEvidenceSerializer(many=True), 201: CaseEvidenceSerializer},
+        summary='Listar o subir evidencias desde el panel administrativo (ADM-05)',
+    )
     @action(detail=True, methods=['get', 'post'], url_path='evidence')
     def evidence(self, request, pk=None):
         """ADM-05: GET / POST /api/v1/admin/cases/{case_id}/evidence/"""
@@ -653,6 +774,11 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
         ev = serializer.save(caso=case, usuario=request.user)
         return Response(CaseEvidenceSerializer(ev).data, status=status.HTTP_201_CREATED)
 
+    @extend_schema(
+        request=CaseEvidenceUpdateSerializer,
+        responses={200: CaseEvidenceSerializer},
+        summary='Actualizar audiencia, estado de revisión o descripción de evidencia (ADM-11)',
+    )
     @action(detail=True, methods=['patch'], url_path=r'evidence/(?P<evidence_id>[^/.]+)')
     def update_evidence(self, request, pk=None, evidence_id=None):
         """ADM-11 (AMP-10): PATCH /api/v1/admin/cases/{case_id}/evidence/{evidence_id}/"""
@@ -664,20 +790,36 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
         serializer.save()
         return Response(CaseEvidenceSerializer(ev).data, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('download', OpenApiTypes.BOOL, description='Si es 1/true, descarga el binario directamente (FileResponse).'),
+        ],
+        responses={200: CaseEvidenceSerializer},
+        summary='Descargar o consultar metadatos protegidos de una evidencia (ADM-06)',
+    )
     @action(detail=True, methods=['get'], url_path=r'evidence/(?P<evidence_id>[^/.]+)/download')
     def download_evidence(self, request, pk=None, evidence_id=None):
         """ADM-06: GET /api/v1/admin/cases/{case_id}/evidence/{evidence_id}/download/"""
         case = self.get_object()
         ev = get_object_or_404(CaseEvidence, pk=evidence_id, caso=case)
+        if request.query_params.get('download') in ('1', 'true') and ev.ruta_archivo and default_storage.exists(ev.ruta_archivo):
+            return FileResponse(
+                default_storage.open(ev.ruta_archivo, 'rb'),
+                as_attachment=True,
+                filename=ev.nombre_original or f'evidencia_{ev.id}',
+                content_type=ev.mime_type or 'application/octet-stream',
+            )
         return Response({
             'id_evidencia': str(ev.id),
             'id_caso': str(case.id),
             'nombre_original': ev.nombre_original,
             'tipo_archivo': ev.tipo_archivo,
             'mime_type': ev.mime_type,
+            'tamano_bytes': ev.tamano_bytes,
             'audiencia': ev.audiencia,
             'estado_revision': ev.estado_revision,
             'ruta_archivo': ev.ruta_archivo,
+            'download_url': f'/api/v1/admin/cases/{case.id}/evidence/{ev.id}/download/?download=1',
         })
 
     def _handle_moderation(self, request):
@@ -695,16 +837,31 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
         )
         return Response(AdminCaseDetailSerializer(updated_case, context={'request': request}).data)
 
+    @extend_schema(
+        request=CaseModerationActionSerializer,
+        responses={200: AdminCaseDetailSerializer},
+        summary='Aprobar, rechazar o solicitar corrección sobre la publicación de un caso (ADM-07)',
+    )
     @action(detail=True, methods=['post'], url_path='moderation', permission_classes=[IsAdminOrSuperAdmin])
     def moderation(self, request, pk=None):
         """ADM-07: POST /api/v1/admin/cases/{case_id}/moderation/"""
         return self._handle_moderation(request)
 
+    @extend_schema(
+        request=CaseModerationActionSerializer,
+        responses={200: AdminCaseDetailSerializer},
+        summary='Alias compatible para moderar publicación de caso (ADM-07)',
+    )
     @action(detail=True, methods=['post'], url_path='moderate', permission_classes=[IsAdminOrSuperAdmin])
     def moderate(self, request, pk=None):
         """Alias compatible con POST /api/v1/admin/cases/{case_id}/moderate/"""
         return self._handle_moderation(request)
 
+    @extend_schema(
+        request=CaseCorrectionRequestCreateSerializer,
+        responses={201: CaseCorrectionRequestSerializer},
+        summary='Crear solicitud formal de corrección para el ciudadano (ADM-07)',
+    )
     @action(detail=True, methods=['post'], url_path='correction-requests', permission_classes=[IsAdminOrSuperAdmin])
     def correction_requests(self, request, pk=None):
         """ADM-07: POST /api/v1/admin/cases/{case_id}/correction-requests/"""
@@ -750,11 +907,21 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
         case.refresh_from_db()
         return Response(AdminCaseDetailSerializer(case, context={'request': request}).data)
 
+    @extend_schema(
+        request=CaseAssignResponsibleSerializer,
+        responses={200: AdminCaseDetailSerializer},
+        summary='Asignar o reasignar responsable territorial al caso (ADM-08)',
+    )
     @action(detail=True, methods=['post'], url_path='assignments', permission_classes=[IsAdminOrSuperAdmin])
     def assignments(self, request, pk=None):
         """ADM-08: POST /api/v1/admin/cases/{case_id}/assignments/"""
         return self._handle_assign(request)
 
+    @extend_schema(
+        request=CaseAssignResponsibleSerializer,
+        responses={200: AdminCaseDetailSerializer},
+        summary='Alias compatible para asignar responsable al caso (ADM-08)',
+    )
     @action(detail=True, methods=['post'], url_path='assign', permission_classes=[IsAdminOrSuperAdmin])
     def assign(self, request, pk=None):
         """Alias compatible con POST /api/v1/admin/cases/{case_id}/assign/"""
@@ -774,16 +941,31 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
         )
         return Response(AdminCaseDetailSerializer(updated_case, context={'request': request}).data)
 
+    @extend_schema(
+        request=CaseManagementStatusSerializer,
+        responses={200: AdminCaseDetailSerializer},
+        summary='Resolver o cerrar narrativamente un caso y cambiar estado operativo (ADM-10)',
+    )
     @action(detail=True, methods=['post'], url_path='resolution')
     def resolution(self, request, pk=None):
         """ADM-10 (AMP-11): POST /api/v1/admin/cases/{case_id}/resolution/"""
         return self._handle_resolution_or_status(request)
 
+    @extend_schema(
+        request=CaseManagementStatusSerializer,
+        responses={200: AdminCaseDetailSerializer},
+        summary='Alias compatible para resolver o cerrar un caso (ADM-10)',
+    )
     @action(detail=True, methods=['post'], url_path='resolve')
     def resolve(self, request, pk=None):
         """Alias compatible con POST /api/v1/admin/cases/{case_id}/resolve/"""
         return self._handle_resolution_or_status(request)
 
+    @extend_schema(
+        request=CaseManagementStatusSerializer,
+        responses={200: AdminCaseDetailSerializer},
+        summary='Cambiar estado operativo de un caso (ADM-10)',
+    )
     @action(detail=True, methods=['post'], url_path='status')
     def change_status(self, request, pk=None):
         """Alias compatible con POST /api/v1/admin/cases/{case_id}/status/"""
@@ -806,11 +988,21 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
         )
         return Response(CaseUpdateSerializer(seguimiento).data, status=status.HTTP_201_CREATED)
 
+    @extend_schema(
+        request=CaseUpdateCreateSerializer,
+        responses={201: CaseUpdateSerializer},
+        summary='Registrar avance o seguimiento con nivel de audiencia (ADM-09)',
+    )
     @action(detail=True, methods=['post'], url_path='progress')
     def progress(self, request, pk=None):
         """ADM-09 (AMP-08): POST /api/v1/admin/cases/{case_id}/progress/"""
         return self._handle_progress(request)
 
+    @extend_schema(
+        request=CaseUpdateCreateSerializer,
+        responses={201: CaseUpdateSerializer},
+        summary='Alias compatible para registrar avance o seguimiento (ADM-09)',
+    )
     @action(detail=True, methods=['post'], url_path='updates')
     def add_update(self, request, pk=None):
         """Alias compatible con POST /api/v1/admin/cases/{case_id}/updates/"""
@@ -830,6 +1022,38 @@ class AdminCaseReportView(APIView):
     """
     permission_classes = [IsResponsibleOrAdmin]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('estado_publicacion', OpenApiTypes.STR, description='pendiente, aprobado, rechazado'),
+            OpenApiParameter('id_estado', OpenApiTypes.UUID, description='UUID de estado operativo'),
+            OpenApiParameter('estado', OpenApiTypes.STR, description='Nombre de estado operativo'),
+            OpenApiParameter('prioridad', OpenApiTypes.STR, description='baja, media, alta, critica'),
+            OpenApiParameter('id_departamento', OpenApiTypes.UUID, description='UUID de departamento'),
+            OpenApiParameter('id_municipio', OpenApiTypes.UUID, description='UUID de municipio'),
+            OpenApiParameter('id_comunidad', OpenApiTypes.UUID, description='UUID de comunidad'),
+            OpenApiParameter('id_tipo_caso', OpenApiTypes.UUID, description='UUID de tipo de caso'),
+            OpenApiParameter('categoria', OpenApiTypes.STR, description='Categoría temática textual'),
+            OpenApiParameter('naturaleza', OpenApiTypes.STR, description='problematica, proyecto_iniciativa, otro'),
+            OpenApiParameter('id_responsable', OpenApiTypes.UUID, description='UUID de responsable activo'),
+            OpenApiParameter('search', OpenApiTypes.STR, description='Búsqueda por código, título o descripción'),
+            OpenApiParameter('page', OpenApiTypes.INT, description='Número de página (1..N)'),
+            OpenApiParameter('page_size', OpenApiTypes.INT, description='Tamaño de página (default 20)'),
+        ],
+        responses={
+            200: inline_serializer(
+                name='AdminCaseReportResponse',
+                fields={
+                    'kpis': drf_serializers.DictField(),
+                    'totals': drf_serializers.DictField(),
+                    'count': drf_serializers.IntegerField(),
+                    'page': drf_serializers.IntegerField(),
+                    'page_size': drf_serializers.IntegerField(),
+                    'results': AdminCaseDetailSerializer(many=True),
+                },
+            )
+        },
+        summary='Informe filtrado de casos con agregados globales y filas paginadas (REP-01)',
+    )
     def get(self, request):
         qs = (
             Case.objects.select_related(
@@ -888,6 +1112,24 @@ class AdminCaseReportExportCSVView(APIView):
     """
     permission_classes = [IsResponsibleOrAdmin]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('estado_publicacion', OpenApiTypes.STR),
+            OpenApiParameter('id_estado', OpenApiTypes.UUID),
+            OpenApiParameter('estado', OpenApiTypes.STR),
+            OpenApiParameter('prioridad', OpenApiTypes.STR),
+            OpenApiParameter('id_departamento', OpenApiTypes.UUID),
+            OpenApiParameter('id_municipio', OpenApiTypes.UUID),
+            OpenApiParameter('id_comunidad', OpenApiTypes.UUID),
+            OpenApiParameter('id_tipo_caso', OpenApiTypes.UUID),
+            OpenApiParameter('categoria', OpenApiTypes.STR),
+            OpenApiParameter('naturaleza', OpenApiTypes.STR),
+            OpenApiParameter('id_responsable', OpenApiTypes.UUID),
+            OpenApiParameter('search', OpenApiTypes.STR),
+        ],
+        responses={(200, 'text/csv'): OpenApiTypes.BINARY},
+        summary='Exportación CSV de toda la selección filtrada de casos (REP-02)',
+    )
     def get(self, request):
         qs = (
             Case.objects.select_related(

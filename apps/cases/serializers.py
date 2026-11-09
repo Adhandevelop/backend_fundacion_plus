@@ -1,3 +1,6 @@
+import os
+import uuid as uuid_lib
+from django.core.files.storage import default_storage
 from rest_framework import serializers
 from apps.cases.models import (
     Case,
@@ -19,6 +22,7 @@ from apps.tracking.serializers import (
     PublicCaseUpdateSerializer,
 )
 from core.gis import make_geojson_point
+from core.validators import validate_file_safety
 
 
 class CaseCategorySerializer(serializers.ModelSerializer):
@@ -48,10 +52,17 @@ class CaseStatusSerializer(serializers.ModelSerializer):
 
 
 class CaseEvidenceSerializer(serializers.ModelSerializer):
+    """
+    Serializador de evidencias de caso (CIT-06, ADM-05).
+    Soporta subida multipart mediante el campo `file` o `archivo` (máximo 15 MB; JPG, PNG, WEBP, PDF, MP4, MP3, DOC/X, XLS/X),
+    o referencia interna `ruta_archivo`.
+    """
     id_evidencia = serializers.UUIDField(source='id', read_only=True)
     id_aporte = serializers.UUIDField(source='aporte_id', read_only=True)
     usuario_nombre = serializers.CharField(source='usuario.full_name', read_only=True)
     download_url = serializers.SerializerMethodField()
+    file = serializers.FileField(write_only=True, required=False)
+    archivo = serializers.FileField(write_only=True, required=False)
 
     class Meta:
         model = CaseEvidence
@@ -62,6 +73,8 @@ class CaseEvidenceSerializer(serializers.ModelSerializer):
             'usuario',
             'usuario_nombre',
             'id_aporte',
+            'file',
+            'archivo',
             'tipo_archivo',
             'ruta_archivo',
             'download_url',
@@ -83,9 +96,42 @@ class CaseEvidenceSerializer(serializers.ModelSerializer):
             'download_url',
             'fecha_subida',
         ]
+        extra_kwargs = {
+            'ruta_archivo': {'required': False},
+            'tipo_archivo': {'required': False},
+        }
 
     def get_download_url(self, obj) -> str:
         return f'/api/v1/me/cases/{obj.caso_id}/evidence/{obj.id}/download/'
+
+    def validate(self, attrs):
+        uploaded = attrs.pop('file', None) or attrs.pop('archivo', None)
+        if uploaded:
+            validate_file_safety(uploaded)
+            ext = os.path.splitext(uploaded.name)[1].lower()
+            if ext in ('.jpg', '.jpeg', '.png', '.webp'):
+                inferred_type = CaseEvidence.TipoArchivo.IMAGEN
+            elif ext in ('.mp4', '.mov', '.webm'):
+                inferred_type = CaseEvidence.TipoArchivo.VIDEO
+            elif ext in ('.mp3', '.wav', '.ogg'):
+                inferred_type = CaseEvidence.TipoArchivo.AUDIO
+            else:
+                inferred_type = CaseEvidence.TipoArchivo.DOCUMENTO
+            attrs.setdefault('tipo_archivo', inferred_type)
+            attrs['nombre_original'] = os.path.basename(uploaded.name)[:255]
+            attrs['mime_type'] = getattr(uploaded, 'content_type', None) or 'application/octet-stream'
+            attrs['tamano_bytes'] = getattr(uploaded, 'size', None)
+            saved_path = default_storage.save(
+                f"cases/evidence/{uuid_lib.uuid4().hex}_{attrs['nombre_original']}",
+                uploaded,
+            )
+            attrs['ruta_archivo'] = saved_path
+        elif not attrs.get('ruta_archivo') and not self.instance:
+            raise serializers.ValidationError(
+                {'file': 'Debe adjuntar un archivo en el campo file/archivo o indicar ruta_archivo.'}
+            )
+        attrs.setdefault('tipo_archivo', CaseEvidence.TipoArchivo.DOCUMENTO)
+        return attrs
 
 
 class CaseEvidenceUpdateSerializer(serializers.ModelSerializer):
@@ -624,3 +670,79 @@ class CaseUpdateCreateSerializer(serializers.Serializer):
         attrs['resolved_visible'] = bool(attrs.get('visible_publicamente', False))
         attrs['resolved_new_status'] = attrs.get('id_estado') or attrs.get('estado') or None
         return attrs
+
+
+class CaseCorrectionRequestCreateSerializer(serializers.Serializer):
+    """ADM-07: Solicitud formal de corrección sobre un caso."""
+    motivo = serializers.CharField(help_text='Explicación clara de los datos o soportes requeridos al ciudadano.')
+    campos_solicitados = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        default=list,
+        help_text='Lista opcional de campos sugeridos para subsanar.',
+    )
+
+
+class CitizenContributionCreateSerializer(serializers.Serializer):
+    """CIT-08: Envío de aporte ciudadano o respuesta a solicitud de corrección."""
+    contenido = serializers.CharField(required=False, help_text='Texto del aporte o subsanación del ciudadano.')
+    mensaje = serializers.CharField(required=False, help_text='Alias de contenido.')
+    id_solicitud_correccion = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text='UUID de la solicitud de corrección que se responde (opcional).',
+    )
+    files = serializers.ListField(
+        child=serializers.FileField(),
+        required=False,
+        help_text='Archivos adjuntos opcionales (multipart/form-data, máx. 15 MB por archivo).',
+    )
+
+
+class GeoJSONPointGeometrySerializer(serializers.Serializer):
+    type = serializers.CharField(default='Point')
+    srid = serializers.IntegerField(default=4326)
+    coordinates = serializers.ListField(
+        child=serializers.FloatField(),
+        min_length=2,
+        max_length=2,
+        help_text='[longitud, latitud] generalizadas a 2 decimales en SRID 4326.',
+    )
+
+
+class GeoJSONCasePropertiesSerializer(serializers.Serializer):
+    id_caso = serializers.UUIDField()
+    codigo = serializers.CharField()
+    radicado_code = serializers.CharField()
+    titulo = serializers.CharField()
+    prioridad = serializers.ChoiceField(choices=Case.Prioridad.choices)
+    id_estado = serializers.UUIDField()
+    estado = serializers.CharField()
+    id_tipo_caso = serializers.UUIDField()
+    tipo = serializers.CharField()
+    categoria = serializers.CharField()
+    naturaleza = serializers.CharField()
+    id_comunidad = serializers.UUIDField()
+    comunidad = serializers.CharField()
+    id_municipio = serializers.UUIDField()
+    municipio = serializers.CharField()
+    id_departamento = serializers.UUIDField()
+    departamento = serializers.CharField()
+    longitud = serializers.FloatField()
+    latitud = serializers.FloatField()
+    fecha_creacion = serializers.DateTimeField()
+
+
+class GeoJSONCaseFeatureSerializer(serializers.Serializer):
+    type = serializers.CharField(default='Feature')
+    id = serializers.UUIDField()
+    geometry = GeoJSONPointGeometrySerializer()
+    properties = GeoJSONCasePropertiesSerializer()
+
+
+class GeoJSONCaseFeatureCollectionSerializer(serializers.Serializer):
+    """MAP-02: Respuesta GeoJSON FeatureCollection RFC 7946 (SRID 4326)."""
+    type = serializers.CharField(default='FeatureCollection')
+    srid = serializers.IntegerField(default=4326)
+    count = serializers.IntegerField()
+    features = GeoJSONCaseFeatureSerializer(many=True)

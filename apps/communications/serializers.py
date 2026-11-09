@@ -68,8 +68,19 @@ class CaseCommentSerializer(serializers.ModelSerializer):
 
 
 class CommentModerationActionSerializer(serializers.Serializer):
-    estado_moderacion = serializers.CharField(required=False)
+    estado_moderacion = serializers.ChoiceField(
+        choices=['aprobado', 'rechazado', 'oculto', 'approved', 'rejected', 'hidden'],
+        required=False,
+        help_text="Acción de moderación sobre el comentario: 'aprobado', 'rechazado' u 'oculto'.",
+    )
     moderation_status = serializers.CharField(required=False)
+    motivo = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default='',
+        help_text='Motivo de moderación (obligatorio al rechazar u ocultar si la política lo exige; se guarda en auditoria_eventos).',
+    )
+    moderation_reason = serializers.CharField(required=False, allow_blank=True, default='')
 
     def validate(self, attrs):
         raw = (attrs.get('estado_moderacion') or attrs.get('moderation_status') or '').strip().lower()
@@ -84,6 +95,7 @@ class CommentModerationActionSerializer(serializers.Serializer):
         if raw not in mapping:
             raise serializers.ValidationError({'estado_moderacion': 'Estado de moderación no válido.'})
         attrs['resolved_status'] = mapping[raw]
+        attrs['resolved_motivo'] = (attrs.get('motivo') or attrs.get('moderation_reason') or '').strip()
         return attrs
 
 
