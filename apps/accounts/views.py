@@ -1,6 +1,10 @@
+import logging
 import os
 from django.conf import settings
+from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
+from django.core.cache import cache
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.files.storage import default_storage
 from django.db import transaction
 from django.db.models import Q
@@ -11,8 +15,11 @@ from rest_framework import generics, permissions, serializers as drf_serializers
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
+
+from apps.accounts.emails import send_password_reset_email
 
 from apps.accounts.models import (
     ResponsibleScopeAssignment,
@@ -299,29 +306,81 @@ class LogoutView(APIView):
         )
 
 
+logger = logging.getLogger(__name__)
+
+
+class PasswordResetRateThrottle(AnonRateThrottle):
+    scope = 'password_reset'
+
+
 class PasswordResetRequestView(APIView):
     """AUTH-05: POST /api/v1/auth/password-reset/request/"""
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [PasswordResetRateThrottle]
     serializer_class = PasswordResetRequestSerializer
 
+    GENERIC_MESSAGE = (
+        'Si el correo está asociado a una cuenta activa, recibirás instrucciones para restablecer tu contraseña.'
+    )
+
+    @extend_schema(
+        request=PasswordResetRequestSerializer,
+        responses={
+            200: inline_serializer(
+                name='PasswordResetRequestResponse',
+                fields={
+                    'message': drf_serializers.CharField(),
+                    'detail': drf_serializers.CharField(),
+                },
+            )
+        },
+        summary='Solicitar enlace de recuperación de contraseña por correo (AUTH-05)',
+    )
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         correo = serializer.validated_data['resolved_correo']
+
+        cooldown = int(getattr(settings, 'PASSWORD_RESET_COOLDOWN_SECONDS', 60) or 0)
+        cache_key = f'pwd_reset_cooldown:{correo}'
+        if cooldown > 0 and cache.get(cache_key):
+            return Response(
+                {'message': self.GENERIC_MESSAGE, 'detail': self.GENERIC_MESSAGE},
+                status=status.HTTP_200_OK,
+            )
+
         user = User.objects.filter(correo__iexact=correo, estado=User.Estado.ACTIVO).first()
         if user:
-            AuditService.log_access(
-                actor=user,
-                correo_intentado=correo,
-                tipo_evento='recuperacion_clave',
-                resultado='exitoso',
-                request=request,
-            )
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = default_token_generator.make_token(user)
+            try:
+                send_password_reset_email(user, uid, token)
+                if cooldown > 0:
+                    cache.set(cache_key, True, timeout=cooldown)
+                AuditService.log_access(
+                    actor=user,
+                    correo_intentado=correo,
+                    tipo_evento='recuperacion_clave',
+                    resultado='exitoso',
+                    request=request,
+                )
+            except Exception as exc:
+                logger.error(
+                    'Fallo de envío SMTP en recuperación de contraseña para usuario=%s (%s)',
+                    user.pk,
+                    exc.__class__.__name__,
+                )
+                AuditService.log_access(
+                    actor=user,
+                    correo_intentado=correo,
+                    tipo_evento='recuperacion_clave',
+                    resultado='fallido',
+                    request=request,
+                )
+
         # Respuesta genérica sin revelar si el correo existe (regla AUTH-05)
         return Response(
-            {
-                'message': 'Si el correo está asociado a una cuenta activa, recibirás instrucciones para restablecer tu contraseña.'
-            },
+            {'message': self.GENERIC_MESSAGE, 'detail': self.GENERIC_MESSAGE},
             status=status.HTTP_200_OK,
         )
 
@@ -331,6 +390,16 @@ class PasswordResetValidateView(APIView):
     permission_classes = [permissions.AllowAny]
     serializer_class = PasswordResetValidateSerializer
 
+    @extend_schema(
+        request=PasswordResetValidateSerializer,
+        responses={
+            200: inline_serializer(
+                name='PasswordResetValidateResponse',
+                fields={'valid': drf_serializers.BooleanField()},
+            )
+        },
+        summary='Validar enlace/token de recuperación sin cambiar la contraseña (AUTH-06)',
+    )
     def post(self, request):
         serializer = PasswordResetValidateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -355,6 +424,19 @@ class PasswordResetConfirmView(APIView):
     permission_classes = [permissions.AllowAny]
     serializer_class = PasswordResetConfirmSerializer
 
+    @extend_schema(
+        request=PasswordResetConfirmSerializer,
+        responses={
+            200: inline_serializer(
+                name='PasswordResetConfirmResponse',
+                fields={
+                    'message': drf_serializers.CharField(),
+                    'detail': drf_serializers.CharField(),
+                },
+            )
+        },
+        summary='Confirmar nueva contraseña, invalidar enlace y revocar sesiones anteriores (AUTH-07)',
+    )
     def post(self, request):
         serializer = PasswordResetConfirmSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -372,10 +454,17 @@ class PasswordResetConfirmView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        new_password = serializer.validated_data['new_password']
+        try:
+            validate_password(new_password, user=user)
+        except DjangoValidationError as exc:
+            raise drf_serializers.ValidationError({'new_password': list(exc.messages)})
+
         AuditService.set_db_actor_session(user)
-        user.set_password(serializer.validated_data['new_password'])
+        user.set_password(new_password)
         user.save(update_fields=['password', 'fecha_actualizacion'])
         Token.objects.filter(user=user).delete()
+        cache.delete(f'pwd_reset_cooldown:{user.correo.lower()}')
         AuditService.log_access(
             actor=user,
             correo_intentado=user.correo,
@@ -383,7 +472,13 @@ class PasswordResetConfirmView(APIView):
             resultado='exitoso',
             request=request,
         )
-        return Response({'message': 'Contraseña restablecida exitosamente.'}, status=status.HTTP_200_OK)
+        return Response(
+            {
+                'message': 'Contraseña restablecida exitosamente.',
+                'detail': 'Contraseña restablecida exitosamente.',
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class MeProfileView(generics.RetrieveUpdateAPIView):

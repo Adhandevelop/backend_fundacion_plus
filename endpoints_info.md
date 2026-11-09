@@ -202,13 +202,26 @@
   }
   ```
 
-### `AUTH-05`, `AUTH-06` y `AUTH-07` · Recuperación de Contraseña
+### `AUTH-05`, `AUTH-06` y `AUTH-07` · Recuperación de Contraseña (vía Resend SMTP)
 - **Solicitar recuperación (`AUTH-05`):** `POST /api/v1/auth/password-reset/request/`
   - **Request:** `{"correo": "usuario@ejemplo.org"}`
-  - **Response (`200 OK`):** `{"message": "Si el correo está asociado a una cuenta activa, recibirás instrucciones para restablecer tu contraseña."}`
+  - **Comportamiento en servidor:**
+    - Para cuentas con `estado = 'activo'`, genera `uid` (base64 URL-safe del UUID del usuario) y `token` temporal con vigencia de **1 hora** (`PASSWORD_RESET_TIMEOUT = 3600` segundos).
+    - Envía correo multipart (**texto plano + HTML**) mediante **Resend SMTP** (`DEFAULT_FROM_EMAIL = PLUS <notificaciones@fundacionplus.site>`) con el enlace:
+      ```text
+      https://fundacionplus.site/restablecer-contrasena?uid=<uid>&token=<token>
+      ```
+    - Incluye limitador de solicitudes repetidas (`PasswordResetRateThrottle` y ventana de enfriamiento por cuenta) y registra el resultado (`exitoso` o `fallido`) en `auditoria_accesos` sin exponer jamás el token en logs ni en respuestas.
+  - **Response (`200 OK` — genérica sin revelar existencia de cuenta):**
+    ```json
+    {
+      "message": "Si el correo está asociado a una cuenta activa, recibirás instrucciones para restablecer tu contraseña.",
+      "detail": "Si el correo está asociado a una cuenta activa, recibirás instrucciones para restablecer tu contraseña."
+    }
+    ```
 - **Validar enlace/token (`AUTH-06`):** `POST /api/v1/auth/password-reset/validate/`
   - **Request:** Acepta `{"uid": "<uid_base64>", "token": "<token>"}` o token compuesto `{"token": "<uid_base64>.<token>"}`.
-  - **Response (`200 OK`):** `{"valid": true}` (o `400 Bad Request` con `{"code": "invalid_token", "message": "..."}`).
+  - **Response (`200 OK`):** `{"valid": true}` (o `400 Bad Request` con `{"code": "invalid_token", "message": "El enlace de recuperación es inválido o ha expirado."}`).
 - **Confirmar nueva contraseña (`AUTH-07`):** `POST /api/v1/auth/password-reset/confirm/`
   - **Request:**
     ```json
@@ -220,7 +233,8 @@
     }
     ```
     *(Si no se envía `uid` por separado, puede enviarse `"token": "<uid_base64>.<token>"`).*
-  - **Response (`200 OK`):** Actualiza el hash de contraseña, revoca las sesiones activas y devuelve `{"message": "Contraseña restablecida exitosamente."}`.
+  - **Efecto en servidor:** Valida la nueva contraseña contra los validadores de seguridad de Django (incluyendo similitud con datos del usuario), actualiza el hash de contraseña (lo que invalida inmediatamente el enlace para que no pueda reutilizarse) y elimina el registro en `authtoken_token` revocando todas las sesiones anteriores (`access`, `refresh` y `Token`).
+  - **Response (`200 OK`):** `{"message": "Contraseña restablecida exitosamente.", "detail": "Contraseña restablecida exitosamente."}`.
 
 ---
 

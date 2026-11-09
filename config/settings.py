@@ -189,8 +189,30 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'anon': '300/minute',
         'user': '1000/minute',
+        'password_reset': os.getenv('PASSWORD_RESET_THROTTLE_RATE', '5/hour'),
     },
 }
+
+# Email / Resend SMTP & Password Reset Configuration
+EMAIL_BACKEND = os.getenv(
+    'EMAIL_BACKEND',
+    'django.core.mail.backends.console.EmailBackend',
+).strip()
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.resend.com').strip()
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True').strip().lower() in ('true', '1', 'yes')
+EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'False').strip().lower() in ('true', '1', 'yes')
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', 'resend').strip()
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.getenv(
+    'DEFAULT_FROM_EMAIL',
+    'PLUS <notificaciones@fundacionplus.site>',
+).strip()
+EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '15'))
+
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'https://fundacionplus.site').strip().rstrip('/')
+PASSWORD_RESET_TIMEOUT = int(os.getenv('PASSWORD_RESET_TIMEOUT', '3600'))
+PASSWORD_RESET_COOLDOWN_SECONDS = int(os.getenv('PASSWORD_RESET_COOLDOWN_SECONDS', '60'))
 
 # JWT Configuration (djangorestframework-simplejwt)
 SIMPLE_JWT = {
