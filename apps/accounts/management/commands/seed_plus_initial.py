@@ -1,3 +1,4 @@
+from django.core.management import call_command
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from rest_framework.authtoken.models import Token
@@ -104,7 +105,10 @@ class Command(BaseCommand):
         for clave, valor in configs:
             SiteSetting.objects.get_or_create(clave=clave, defaults={'valor': valor})
 
-        # 7. Usuarios iniciales (1 Administrador y 1 Ciudadano)
+        # 7. Territorios de Colombia (departamentos, municipios principales y comunidades)
+        call_command('seed_territories')
+
+        # 8. Usuarios iniciales (1 Administrador y 1 Ciudadano)
         admin_role = Role.objects.get(nombre='administrador')
         citizen_role = Role.objects.get(nombre='ciudadano')
 
