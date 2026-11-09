@@ -1,11 +1,20 @@
 from typing import Optional
+import uuid as uuid_lib
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.accounts.models import Role, User
 from apps.audit.services import AuditService
-from apps.cases.models import Case, CaseAssignment, CaseStatus
+from apps.cases.models import (
+    Case,
+    CaseAssignment,
+    CaseContribution,
+    CaseCorrectionRequest,
+    CaseEvidence,
+    CaseStatus,
+)
+from apps.communications.models import LegalAcceptance
 from apps.notifications.services import NotificationService
 from apps.tracking.models import CaseStatusHistory, CaseUpdate
 from core.gis import make_geojson_point
@@ -30,11 +39,22 @@ PRIORITY_ALIASES = {
     'CRITICA': Case.Prioridad.CRITICA,
 }
 
+AUDIENCE_ALIASES = {
+    'PUBLIC': CaseUpdate.Audiencia.PUBLICO,
+    'PUBLICO': CaseUpdate.Audiencia.PUBLICO,
+    'CITIZEN': CaseUpdate.Audiencia.CIUDADANO,
+    'CIUDADANO': CaseUpdate.Audiencia.CIUDADANO,
+    'INTERNAL': CaseUpdate.Audiencia.INTERNO,
+    'INTERNO': CaseUpdate.Audiencia.INTERNO,
+    'PRIVATE': CaseUpdate.Audiencia.INTERNO,
+}
+
 
 class CaseService:
     """
     Servicio de dominio transaccional sobre las tablas de `plus`:
-    casos, estados_caso, asignaciones_casos, seguimientos, historial_estados y auditoria_casos.
+    casos, estados_caso, asignaciones_casos, seguimientos, historial_estados,
+    solicitudes_correccion, aportes_caso, evidencias y auditoria_casos.
     """
 
     @staticmethod
@@ -48,10 +68,25 @@ class CaseService:
         return False
 
     @classmethod
+    def get_allowed_actions(cls, user: Optional[User], case: Case) -> list[str]:
+        if not user or not user.is_authenticated:
+            return ['view_public'] if case.estado_publicacion == Case.EstadoPublicacion.APROBADO else []
+        actions = ['view']
+        if case.usuario_id == user.id:
+            actions.extend(['contribute', 'upload_evidence', 'message'])
+        if user.has_any_role(Role.Nombre.ADMINISTRADOR, Role.Nombre.MODERADOR):
+            actions.extend(['moderate', 'request_correction', 'assign', 'progress', 'resolve', 'manage_evidence', 'message'])
+        elif cls.user_can_manage_case(user, case):
+            actions.extend(['progress', 'resolve', 'upload_evidence', 'message'])
+        return list(dict.fromkeys(actions))
+
+    @classmethod
     @transaction.atomic
     def register_case(cls, *, reporter: User, validated_data: dict, request=None) -> Case:
         AuditService.set_db_actor_session(reporter)
         estado_inicial = validated_data.pop('estado', None) or CaseStatus.get_default_status()
+        validated_data.pop('acepta_tratamiento_datos', None)
+        validated_data.pop('accepts_data_policy', None)
 
         lat = validated_data.pop('latitud', None) or validated_data.pop('exact_latitude', None)
         lon = validated_data.pop('longitud', None) or validated_data.pop('exact_longitude', None)
@@ -64,6 +99,15 @@ class CaseService:
             estado=estado_inicial,
             ubicacion=ubicacion,
             **validated_data,
+        )
+
+        # Registrar aceptación legal de radicación (AMP-09)
+        LegalAcceptance.record(
+            finalidad='radicacion_caso',
+            tipo_documento='radicacion_caso',
+            usuario=reporter,
+            caso=case,
+            correo_declarado=reporter.correo,
         )
 
         # En SQLite creamos el historial desde ORM; en PostgreSQL lo crea el trigger tg_casos_historial
@@ -97,10 +141,35 @@ class CaseService:
         estado_publicacion: str,
         motivo: str = '',
         prioridad: Optional[str] = None,
+        solicitar_correccion: bool = False,
         request=None,
     ) -> Case:
         if not actor.has_any_role(Role.Nombre.ADMINISTRADOR, Role.Nombre.MODERADOR):
-            raise PermissionDenied('Solo un Administrador o Moderador puede aprobar o rechazar publicaciones.')
+            raise PermissionDenied('Solo un Administrador o Moderador puede moderar publicaciones de casos.')
+
+        AuditService.set_db_actor_session(actor)
+
+        # AMP-06: Flujo explícito de solicitud de corrección sin inventar un cuarto estado_publicacion
+        if solicitar_correccion or str(estado_publicacion).lower() in ('solicitar_correccion', 'correccion_solicitada', 'correction_requested'):
+            if not motivo.strip():
+                raise ValidationError({'motivo': 'Debe especificar el motivo o requerimiento de corrección.'})
+            CaseCorrectionRequest.objects.create(
+                caso=case,
+                solicitante=actor,
+                motivo=motivo.strip(),
+                estado=CaseCorrectionRequest.Estado.ABIERTA,
+            )
+            if prioridad:
+                case.prioridad = PRIORITY_ALIASES.get(prioridad.upper(), prioridad.lower())
+                case.save(update_fields=['prioridad', 'fecha_actualizacion'])
+            NotificationService.notify(
+                recipient=case.usuario,
+                notification_type='solicitud_correccion',
+                title=f'Solicitud de corrección en tu caso {case.codigo}',
+                message=motivo[:200],
+                related_case=case,
+            )
+            return case
 
         resolved_pub = MODERATION_ALIASES.get(estado_publicacion.upper(), estado_publicacion.lower())
         if resolved_pub == Case.EstadoPublicacion.RECHAZADO and not motivo.strip():
@@ -109,10 +178,17 @@ class CaseService:
         prev_pub = case.estado_publicacion
         prev_prio = case.prioridad
 
-        AuditService.set_db_actor_session(actor)
         case.estado_publicacion = resolved_pub
         if resolved_pub == Case.EstadoPublicacion.APROBADO:
             case.fecha_aprobacion = timezone.now()
+            # Cerrar solicitudes de corrección abiertas si el caso fue aprobado
+            case.solicitudes_correccion.filter(
+                estado__in=[CaseCorrectionRequest.Estado.ABIERTA, CaseCorrectionRequest.Estado.RESPONDIDA]
+            ).update(
+                estado=CaseCorrectionRequest.Estado.CERRADA,
+                revisor=actor,
+                fecha_revision=timezone.now(),
+            )
         if prioridad:
             case.prioridad = PRIORITY_ALIASES.get(prioridad.upper(), prioridad.lower())
         case.save()
@@ -156,18 +232,18 @@ class CaseService:
         case: Case,
         actor: User,
         responsable: User,
+        motivo: str = '',
         request=None,
     ) -> CaseAssignment:
         if not actor.has_any_role(Role.Nombre.ADMINISTRADOR, Role.Nombre.MODERADOR):
             raise PermissionDenied('Solo un Administrador puede asignar responsables a los casos.')
 
-        if not responsable.has_any_role(Role.Nombre.REPRESENTANTE, Role.Nombre.ADMINISTRADOR):
+        if not responsable.has_any_role(Role.Nombre.REPRESENTANTE, Role.Nombre.ADMINISTRADOR) or not responsable.is_active:
             raise ValidationError(
-                {'responsable': 'El usuario seleccionado no posee el rol de Representante/Responsable o Administrador.'}
+                {'responsable': 'El usuario seleccionado no posee un rol activo de Representante/Responsable o Administrador.'}
             )
 
         AuditService.set_db_actor_session(actor)
-        # Cerrar asignación activa previa (política ux_asignacion_caso_activa: un responsable activo por caso)
         case.asignaciones.filter(activo=True).update(
             activo=False,
             fecha_finalizacion=timezone.now(),
@@ -185,7 +261,7 @@ class CaseService:
                 case=case,
                 actor=actor,
                 new_status_name=CaseStatus.Nombre.EN_REVISION,
-                motivo=f'Asignado a representante: {responsable.full_name}',
+                motivo=motivo or f'Asignado a representante: {responsable.full_name}',
                 request=request,
             )
 
@@ -199,6 +275,20 @@ class CaseService:
         return assignment
 
     @classmethod
+    def _resolve_status_object(cls, status_identifier) -> CaseStatus:
+        if isinstance(status_identifier, CaseStatus):
+            return status_identifier
+        text = str(status_identifier).strip()
+        try:
+            uuid_val = uuid_lib.UUID(text)
+            obj = CaseStatus.objects.filter(pk=uuid_val).first()
+            if obj:
+                return obj
+        except (ValueError, TypeError):
+            pass
+        return CaseStatus.get_by_name(text)
+
+    @classmethod
     @transaction.atomic
     def change_management_status(
         cls,
@@ -207,51 +297,82 @@ class CaseService:
         actor: User,
         new_status_name: str,
         motivo: str = '',
+        resultado_resumen: Optional[str] = None,
         request=None,
     ) -> Case:
         if not cls.user_can_manage_case(actor, case):
             raise PermissionDenied('No tienes autorización para cambiar el estado operativo de este caso.')
 
-        target_status = CaseStatus.get_by_name(new_status_name)
-        if target_status.nombre in (CaseStatus.Nombre.RESUELTO, CaseStatus.Nombre.CERRADO) and not motivo.strip():
+        target_status = cls._resolve_status_object(new_status_name)
+        effective_reason = (motivo or resultado_resumen or '').strip()
+        if target_status.nombre in (CaseStatus.Nombre.RESUELTO, CaseStatus.Nombre.CERRADO) and not effective_reason:
             raise ValidationError(
                 {'motivo': 'Debe especificar el motivo o resultado final al resolver o cerrar un caso.'}
             )
 
         prev_status = case.estado
-        if prev_status.id == target_status.id:
-            return case
-
         AuditService.set_db_actor_session(actor)
-        case.estado = target_status
-        case.save(update_fields=['estado', 'fecha_actualizacion'])
 
-        if connection.vendor != 'postgresql':
-            CaseStatusHistory.objects.create(
+        update_fields = ['estado', 'fecha_actualizacion']
+        case.estado = target_status
+
+        # AMP-11: Si es resolución o cierre, persistir resultado narrativo estructurado y seguimiento de resolución
+        if target_status.nombre in (CaseStatus.Nombre.RESUELTO, CaseStatus.Nombre.CERRADO):
+            res_text = (resultado_resumen or effective_reason).strip()
+            tipo_ev = (
+                CaseUpdate.TipoEvento.RESOLUCION
+                if target_status.nombre == CaseStatus.Nombre.RESUELTO
+                else CaseUpdate.TipoEvento.CIERRE
+            )
+            seg_resolucion = CaseUpdate.objects.create(
                 caso=case,
-                estado_anterior=prev_status,
-                estado_nuevo=target_status,
                 usuario=actor,
-                motivo=motivo or 'Cambio de estado',
+                titulo=f'Resolución del caso ({target_status.nombre})',
+                descripcion=res_text,
+                audiencia=CaseUpdate.Audiencia.CIUDADANO,
+                tipo_evento=tipo_ev,
+                visible_publicamente=False,
+            )
+            case.resultado_resumen = res_text
+            case.seguimiento_resolucion = seg_resolucion
+            case.usuario_resolucion = actor
+            case.fecha_resolucion = timezone.now()
+            update_fields.extend([
+                'resultado_resumen',
+                'seguimiento_resolucion',
+                'usuario_resolucion',
+                'fecha_resolucion',
+            ])
+
+        case.save(update_fields=update_fields)
+
+        if prev_status.id != target_status.id:
+            if connection.vendor != 'postgresql':
+                CaseStatusHistory.objects.create(
+                    caso=case,
+                    estado_anterior=prev_status,
+                    estado_nuevo=target_status,
+                    usuario=actor,
+                    motivo=effective_reason or 'Cambio de estado',
+                )
+
+            AuditService.log_case_event(
+                caso=case,
+                actor=actor,
+                tipo_accion='estado_operativo',
+                estado_anterior=prev_status.nombre,
+                estado_nuevo=target_status.nombre,
+                motivo=effective_reason or 'Cambio de estado operativo',
+                request=request,
             )
 
-        AuditService.log_case_event(
-            caso=case,
-            actor=actor,
-            tipo_accion='estado_operativo',
-            estado_anterior=prev_status.nombre,
-            estado_nuevo=target_status.nombre,
-            motivo=motivo or 'Cambio de estado operativo',
-            request=request,
-        )
-
-        NotificationService.notify(
-            recipient=case.usuario,
-            notification_type='estado_caso',
-            title=f'Actualización de estado: {case.codigo}',
-            message=f'Tu caso "{case.titulo}" pasó al estado: {target_status.nombre}. {motivo}'.strip(),
-            related_case=case,
-        )
+            NotificationService.notify(
+                recipient=case.usuario,
+                notification_type='estado_caso',
+                title=f'Actualización de estado: {case.codigo}',
+                message=f'Tu caso "{case.titulo}" pasó al estado: {target_status.nombre}. {effective_reason}'.strip(),
+                related_case=case,
+            )
         return case
 
     @classmethod
@@ -262,7 +383,11 @@ class CaseService:
         case: Case,
         author: User,
         descripcion: str,
+        titulo: Optional[str] = None,
+        audiencia: Optional[str] = None,
+        tipo_evento: str = CaseUpdate.TipoEvento.SEGUIMIENTO,
         visible_publicamente: bool = False,
+        new_status: Optional[str] = None,
         request=None,
     ) -> CaseUpdate:
         is_reporter = case.usuario_id == author.id
@@ -270,23 +395,121 @@ class CaseService:
         if not (is_reporter or can_manage):
             raise PermissionDenied('No tienes permiso para registrar seguimientos en este caso.')
 
+        if audiencia:
+            resolved_audiencia = AUDIENCE_ALIASES.get(str(audiencia).upper(), str(audiencia).lower())
+        elif visible_publicamente:
+            resolved_audiencia = CaseUpdate.Audiencia.PUBLICO
+        else:
+            resolved_audiencia = CaseUpdate.Audiencia.INTERNO
+
         if is_reporter and not can_manage:
-            visible_publicamente = False
+            resolved_audiencia = CaseUpdate.Audiencia.CIUDADANO
 
         AuditService.set_db_actor_session(author)
         seguimiento = CaseUpdate.objects.create(
             caso=case,
             usuario=author,
+            titulo=titulo,
             descripcion=descripcion,
-            visible_publicamente=visible_publicamente,
+            audiencia=resolved_audiencia,
+            tipo_evento=tipo_evento,
+            visible_publicamente=(resolved_audiencia == CaseUpdate.Audiencia.PUBLICO),
         )
 
-        if can_manage:
+        if new_status and can_manage:
+            cls.change_management_status(
+                case=case,
+                actor=author,
+                new_status_name=new_status,
+                motivo=descripcion,
+                request=request,
+            )
+
+        if can_manage and resolved_audiencia in (CaseUpdate.Audiencia.PUBLICO, CaseUpdate.Audiencia.CIUDADANO):
             NotificationService.notify(
                 recipient=case.usuario,
                 notification_type='seguimiento_caso',
-                title=f'Nuevo seguimiento en tu caso {case.codigo}',
+                title=f'Nuevo avance en tu caso {case.codigo}',
                 message=descripcion[:150],
                 related_case=case,
             )
         return seguimiento
+
+    @classmethod
+    @transaction.atomic
+    def add_citizen_contribution(
+        cls,
+        *,
+        case: Case,
+        author: User,
+        contenido: str,
+        solicitud_correccion_id=None,
+        files=None,
+        request=None,
+    ) -> CaseContribution:
+        """CIT-08 (AMP-07): Registra un aporte privado del ciudadano y vincula sus archivos adjuntos."""
+        if case.usuario_id != author.id and not cls.user_can_manage_case(author, case):
+            raise PermissionDenied('Solo el propietario del caso puede registrar aportes ciudadanos.')
+
+        AuditService.set_db_actor_session(author)
+        solicitud = None
+        if solicitud_correccion_id:
+            solicitud = CaseCorrectionRequest.objects.filter(pk=solicitud_correccion_id, caso=case).first()
+        if not solicitud:
+            solicitud = case.active_correction_request
+
+        contribution = CaseContribution.objects.create(
+            caso=case,
+            usuario=author,
+            solicitud_correccion=solicitud,
+            contenido=contenido,
+        )
+
+        if solicitud and solicitud.estado == CaseCorrectionRequest.Estado.ABIERTA:
+            solicitud.estado = CaseCorrectionRequest.Estado.RESPONDIDA
+            solicitud.respuesta = contenido
+            solicitud.fecha_respuesta = timezone.now()
+            solicitud.save(update_fields=['estado', 'respuesta', 'fecha_respuesta'])
+
+        if files:
+            from django.core.files.storage import default_storage
+            from core.validators import validate_file_safety
+            import os
+
+            for f in files:
+                validate_file_safety(f)
+                ext = os.path.splitext(f.name)[1].lower()
+                tipo_map = {
+                    '.jpg': CaseEvidence.TipoArchivo.IMAGEN,
+                    '.jpeg': CaseEvidence.TipoArchivo.IMAGEN,
+                    '.png': CaseEvidence.TipoArchivo.IMAGEN,
+                    '.webp': CaseEvidence.TipoArchivo.IMAGEN,
+                    '.mp4': CaseEvidence.TipoArchivo.VIDEO,
+                    '.mp3': CaseEvidence.TipoArchivo.AUDIO,
+                    '.pdf': CaseEvidence.TipoArchivo.DOCUMENTO,
+                }
+                saved_path = default_storage.save(f'cases/{case.codigo}/contributions/{f.name}', f)
+                CaseEvidence.objects.create(
+                    caso=case,
+                    usuario=author,
+                    aporte=contribution,
+                    tipo_archivo=tipo_map.get(ext, CaseEvidence.TipoArchivo.DOCUMENTO),
+                    ruta_archivo=default_storage.url(saved_path),
+                    descripcion=f'Adjunto en aporte ciudadano ({f.name})',
+                    audiencia=CaseEvidence.Audiencia.CIUDADANO,
+                    estado_revision=CaseEvidence.EstadoRevision.PENDIENTE,
+                    nombre_original=f.name[:255],
+                    mime_type=getattr(f, 'content_type', None),
+                    tamano_bytes=getattr(f, 'size', None),
+                )
+
+        active_assign = case.active_assignment
+        if active_assign:
+            NotificationService.notify(
+                recipient=active_assign.responsable,
+                notification_type='aporte_ciudadano',
+                title=f'Nuevo aporte ciudadano en {case.codigo}',
+                message=contenido[:140],
+                related_case=case,
+            )
+        return contribution

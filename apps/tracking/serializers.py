@@ -10,7 +10,10 @@ class PublicCaseUpdateSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'id_seguimiento',
+            'titulo',
             'descripcion',
+            'audiencia',
+            'tipo_evento',
             'fecha_seguimiento',
             'visible_publicamente',
         ]
@@ -29,7 +32,10 @@ class CaseUpdateSerializer(serializers.ModelSerializer):
             'caso',
             'usuario',
             'autor_nombre',
+            'titulo',
             'descripcion',
+            'audiencia',
+            'tipo_evento',
             'fecha_seguimiento',
             'visible_publicamente',
         ]

@@ -1,4 +1,10 @@
+import os
+from django.contrib.auth.tokens import default_token_generator
+from django.core.files.storage import default_storage
 from django.db import transaction
+from django.db.models import Q
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from rest_framework import generics, permissions, status, viewsets
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
@@ -10,6 +16,8 @@ from apps.accounts.models import (
     ResponsibleScopeAssignment,
     Role,
     User,
+    UserPreference,
+    UserProfile,
     normalize_role_name,
 )
 from apps.accounts.permissions import (
@@ -19,15 +27,22 @@ from apps.accounts.permissions import (
 )
 from apps.accounts.serializers import (
     AdminUserCreateUpdateSerializer,
+    AdminUserStatusSerializer,
     AssignUserRoleSerializer,
     ChangePasswordSerializer,
     CitizenRegistrationSerializer,
     LoginSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetValidateSerializer,
     ResponsibleScopeAssignmentSerializer,
     RoleSerializer,
     UserMeSerializer,
+    UserPreferenceSerializer,
+    UserProfileSerializer,
 )
 from apps.audit.services import AuditService
+from core.validators import validate_file_safety
 
 
 def get_tokens_for_user(user: User) -> dict:
@@ -44,7 +59,7 @@ def get_tokens_for_user(user: User) -> dict:
 
 
 class CitizenRegisterView(APIView):
-    """POST /api/v1/auth/register/ — Registro ciudadano en plus.usuarios."""
+    """AUTH-01: POST /api/v1/auth/register/ — Registro ciudadano en plus.usuarios."""
     permission_classes = [permissions.AllowAny]
     serializer_class = CitizenRegistrationSerializer
 
@@ -75,7 +90,7 @@ class CitizenRegisterView(APIView):
 
 class LoginView(APIView):
     """
-    POST /api/v1/auth/login/ (y endpoint legacy /api/login/)
+    AUTH-02: POST /api/v1/auth/login/ (y endpoint legacy /api/login/)
     Registra en plus.auditoria_accesos cada intento exitoso o fallido.
     """
     permission_classes = [permissions.AllowAny]
@@ -126,13 +141,161 @@ class LoginView(APIView):
         )
 
 
+class LogoutView(APIView):
+    """AUTH-04: POST /api/v1/auth/logout/ — Cierra sesión y revoca Token de API."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        Token.objects.filter(user=request.user).delete()
+        AuditService.log_access(
+            actor=request.user,
+            correo_intentado=request.user.correo,
+            tipo_evento='logout',
+            resultado='exitoso',
+            request=request,
+        )
+        return Response({'message': 'Sesión cerrada exitosamente.'}, status=status.HTTP_200_OK)
+
+
+class PasswordResetRequestView(APIView):
+    """AUTH-05: POST /api/v1/auth/password-reset/request/"""
+    permission_classes = [permissions.AllowAny]
+    serializer_class = PasswordResetRequestSerializer
+
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        correo = serializer.validated_data['resolved_correo']
+        user = User.objects.filter(correo__iexact=correo, estado=User.Estado.ACTIVO).first()
+        if user:
+            AuditService.log_access(
+                actor=user,
+                correo_intentado=correo,
+                tipo_evento='recuperacion_clave',
+                resultado='exitoso',
+                request=request,
+            )
+        # Respuesta genérica sin revelar si el correo existe (regla AUTH-05)
+        return Response(
+            {
+                'message': 'Si el correo está asociado a una cuenta activa, recibirás instrucciones para restablecer tu contraseña.'
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class PasswordResetValidateView(APIView):
+    """AUTH-06: POST /api/v1/auth/password-reset/validate/"""
+    permission_classes = [permissions.AllowAny]
+    serializer_class = PasswordResetValidateSerializer
+
+    def post(self, request):
+        serializer = PasswordResetValidateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            uid = force_str(urlsafe_base64_decode(serializer.validated_data['uid']))
+            user = User.objects.get(pk=uid, estado=User.Estado.ACTIVO)
+        except Exception:
+            return Response(
+                {'code': 'invalid_token', 'message': 'El enlace de recuperación es inválido o ha expirado.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not default_token_generator.check_token(user, serializer.validated_data['token']):
+            return Response(
+                {'code': 'invalid_token', 'message': 'El enlace de recuperación es inválido o ha expirado.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({'valid': True}, status=status.HTTP_200_OK)
+
+
+class PasswordResetConfirmView(APIView):
+    """AUTH-07: POST /api/v1/auth/password-reset/confirm/"""
+    permission_classes = [permissions.AllowAny]
+    serializer_class = PasswordResetConfirmSerializer
+
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            uid = force_str(urlsafe_base64_decode(serializer.validated_data['uid']))
+            user = User.objects.get(pk=uid, estado=User.Estado.ACTIVO)
+        except Exception:
+            return Response(
+                {'code': 'invalid_token', 'message': 'El enlace de recuperación es inválido o ha expirado.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not default_token_generator.check_token(user, serializer.validated_data['token']):
+            return Response(
+                {'code': 'invalid_token', 'message': 'El enlace de recuperación es inválido o ha expirado.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        AuditService.set_db_actor_session(user)
+        user.set_password(serializer.validated_data['new_password'])
+        user.save(update_fields=['password', 'fecha_actualizacion'])
+        Token.objects.filter(user=user).delete()
+        AuditService.log_access(
+            actor=user,
+            correo_intentado=user.correo,
+            tipo_evento='recuperacion_clave',
+            resultado='exitoso',
+            request=request,
+        )
+        return Response({'message': 'Contraseña restablecida exitosamente.'}, status=status.HTTP_200_OK)
+
+
 class MeProfileView(generics.RetrieveUpdateAPIView):
-    """GET / PATCH /api/v1/auth/me/"""
+    """ME-01 y ME-02: GET / PATCH /api/v1/me/ (y /api/v1/auth/me/)"""
     serializer_class = UserMeSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
         return self.request.user
+
+    def perform_update(self, serializer):
+        AuditService.set_db_actor_session(self.request.user)
+        serializer.save()
+
+
+class MePhotoView(APIView):
+    """ME-03 y ME-04: PUT / DELETE /api/v1/me/photo/"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def put(self, request):
+        uploaded = request.FILES.get('photo') or request.FILES.get('foto') or request.FILES.get('file')
+        if not uploaded:
+            return Response(
+                {'code': 'validation_error', 'message': 'Debe adjuntar un archivo de imagen en el campo photo/foto.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        validate_file_safety(uploaded)
+        ext = os.path.splitext(uploaded.name)[1].lower()
+        if ext not in ('.jpg', '.jpeg', '.png', '.webp'):
+            return Response(
+                {'code': 'validation_error', 'message': 'Solo se permiten fotografías en formato JPG, PNG o WEBP.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        saved_path = default_storage.save(f'profiles/{request.user.id}/avatar{ext}', uploaded)
+        profile, _ = UserProfile.objects.get_or_create(usuario=request.user)
+        profile.ruta_foto = default_storage.url(saved_path)
+        profile.save()
+        return Response(UserProfileSerializer(profile).data, status=status.HTTP_200_OK)
+
+    def delete(self, request):
+        profile, _ = UserProfile.objects.get_or_create(usuario=request.user)
+        profile.ruta_foto = None
+        profile.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class MePreferencesView(generics.RetrieveUpdateAPIView):
+    """ME-05: GET / PATCH /api/v1/me/preferences/"""
+    serializer_class = UserPreferenceSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        prefs, _ = UserPreference.objects.get_or_create(usuario=self.request.user)
+        return prefs
 
 
 class ChangePasswordView(APIView):
@@ -183,7 +346,7 @@ class AdministrativoProfileView(APIView):
 
 class AdminUserViewSet(viewsets.ModelViewSet):
     """
-    Administración de usuarios (`plus.usuarios`) y ámbitos de responsables (`plus.asignaciones_responsables`).
+    USR-01 a USR-06: Administración de usuarios (`plus.usuarios`), rol único y estado.
     """
     serializer_class = AdminUserCreateUpdateSerializer
     permission_classes = [IsAdminOrSuperAdmin]
@@ -191,16 +354,37 @@ class AdminUserViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = User.objects.select_related('rol').prefetch_related('asignaciones_ambito').all()
         params = self.request.query_params
-        if role := (params.get('rol') or params.get('role')):
+        if id_rol := params.get('id_rol'):
+            qs = qs.filter(rol_id=id_rol)
+        elif role := (params.get('rol') or params.get('role')):
             qs = qs.filter(rol__nombre=normalize_role_name(role))
         if estado := params.get('estado'):
             qs = qs.filter(estado=estado.lower())
         if search := params.get('search'):
-            qs = (
-                qs.filter(correo__icontains=search)
-                | qs.filter(nombres__icontains=search)
-                | qs.filter(apellidos__icontains=search)
+            qs = qs.filter(
+                Q(correo__icontains=search)
+                | Q(nombres__icontains=search)
+                | Q(apellidos__icontains=search)
             )
+        # USR-01: Filtro de elegibilidad de candidatos responsables para un caso específico
+        if case_id := (params.get('eligible_for_case') or params.get('id_caso')):
+            from apps.cases.models import Case
+            case = Case.objects.filter(pk=case_id).first()
+            if case:
+                qs = qs.filter(
+                    estado=User.Estado.ACTIVO,
+                    rol__nombre__in=[Role.Nombre.REPRESENTANTE, Role.Nombre.ADMINISTRADOR],
+                ).filter(
+                    Q(rol__nombre=Role.Nombre.ADMINISTRADOR)
+                    | Q(
+                        asignaciones_ambito__activo=True,
+                        asignaciones_ambito__comunidad_id=case.comunidad_id,
+                    )
+                    | Q(
+                        asignaciones_ambito__activo=True,
+                        asignaciones_ambito__tipo_caso_id=case.tipo_caso_id,
+                    )
+                ).distinct()
         return qs
 
     def perform_create(self, serializer):
@@ -231,28 +415,21 @@ class AdminUserViewSet(viewsets.ModelViewSet):
                 request=self.request,
             )
 
-    @action(detail=True, methods=['get', 'post'], url_path='roles')
-    @transaction.atomic
-    def manage_roles(self, request, pk=None):
-        """
-        GET / POST /api/v1/admin/users/{id}/roles/
-        Cambia el rol en `plus.usuarios`, registra en `plus.auditoria_permisos` y opcionalmente
-        crea una asignación en `plus.asignaciones_responsables`.
-        """
-        target_user = self.get_object()
-        if request.method == 'GET':
-            return Response({
-                'id_usuario': str(target_user.id),
-                'rol': RoleSerializer(target_user.rol).data,
-                'ambitos': ResponsibleScopeAssignmentSerializer(
-                    target_user.asignaciones_ambito.all(), many=True
-                ).data,
-            })
-
+    def _apply_role_change(self, request, target_user):
         serializer = AssignUserRoleSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        raw_code = serializer.validated_data['role_code']
-        target_role_name = normalize_role_name(raw_code)
+        id_rol = serializer.validated_data.get('id_rol')
+        raw_code = serializer.validated_data.get('role_code') or serializer.validated_data.get('rol') or ''
+
+        if id_rol:
+            new_role = generics.get_object_or_404(Role, pk=id_rol)
+            target_role_name = new_role.nombre
+        else:
+            target_role_name = normalize_role_name(raw_code)
+            new_role, _ = Role.objects.get_or_create(
+                nombre=target_role_name,
+                defaults={'descripcion': dict(Role.Nombre.choices).get(target_role_name, target_role_name)},
+            )
 
         if (
             raw_code.upper() == 'SUPERADMIN' or target_role_name == Role.Nombre.ADMINISTRADOR
@@ -267,11 +444,6 @@ class AdminUserViewSet(viewsets.ModelViewSet):
             )
 
         prev_role = target_user.rol
-        new_role, _ = Role.objects.get_or_create(
-            nombre=target_role_name,
-            defaults={'descripcion': dict(Role.Nombre.choices).get(target_role_name, target_role_name)},
-        )
-
         AuditService.set_db_actor_session(request.user)
         target_user.rol = new_role
         target_user.save(update_fields=['rol', 'fecha_actualizacion'])
@@ -298,8 +470,61 @@ class AdminUserViewSet(viewsets.ModelViewSet):
 
         return Response(UserMeSerializer(target_user).data, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['put', 'post'], url_path='role')
+    @transaction.atomic
+    def change_single_role(self, request, pk=None):
+        """USR-05: PUT /api/v1/admin/users/{id}/role/ — Asigna un único rol al usuario."""
+        target_user = self.get_object()
+        return self._apply_role_change(request, target_user)
+
+    @action(detail=True, methods=['get', 'post', 'put'], url_path='roles')
+    @transaction.atomic
+    def manage_roles(self, request, pk=None):
+        """Compatibilidad con /api/v1/admin/users/{id}/roles/"""
+        target_user = self.get_object()
+        if request.method == 'GET':
+            return Response({
+                'id_usuario': str(target_user.id),
+                'rol': RoleSerializer(target_user.rol, context={'request': request}).data,
+                'ambitos': ResponsibleScopeAssignmentSerializer(
+                    target_user.asignaciones_ambito.all(), many=True
+                ).data,
+            })
+        return self._apply_role_change(request, target_user)
+
+    @action(detail=True, methods=['patch'], url_path='status')
+    @transaction.atomic
+    def change_status(self, request, pk=None):
+        """USR-06: PATCH /api/v1/admin/users/{id}/status/ — Cambia el estado (activo, suspendido, inactivo)."""
+        target_user = self.get_object()
+        serializer = AdminUserStatusSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        new_estado = serializer.validated_data['estado']
+        prev_estado = target_user.estado
+
+        AuditService.set_db_actor_session(request.user)
+        target_user.estado = new_estado
+        target_user.save(update_fields=['estado', 'fecha_actualizacion'])
+
+        if new_estado != User.Estado.ACTIVO:
+            Token.objects.filter(user=target_user).delete()
+
+        AuditService.log(
+            actor=request.user,
+            action='update',
+            module='usuarios',
+            target_model='usuarios',
+            target_id=target_user.pk,
+            description=f'Cambio de estado de usuario {target_user.correo}: {prev_estado} -> {new_estado}',
+            previous_data={'estado': prev_estado},
+            new_data={'estado': new_estado, 'motivo': serializer.validated_data.get('motivo', '')},
+            request=request,
+        )
+        return Response(UserMeSerializer(target_user).data, status=status.HTTP_200_OK)
+
 
 class AdminRoleViewSet(viewsets.ModelViewSet):
+    """USR-07: GET /api/v1/admin/roles/"""
     queryset = Role.objects.all()
     serializer_class = RoleSerializer
 
@@ -307,3 +532,31 @@ class AdminRoleViewSet(viewsets.ModelViewSet):
         if self.action in ('list', 'retrieve'):
             return [IsAdminOrSuperAdmin()]
         return [IsSuperAdmin()]
+
+
+class ResponsibleScopeAssignmentViewSet(viewsets.ModelViewSet):
+    """Sección 14: GET/POST /api/v1/admin/responsibility-scopes/ y PATCH /api/v1/admin/responsibility-scopes/{id}/"""
+    queryset = ResponsibleScopeAssignment.objects.select_related('usuario', 'comunidad', 'tipo_caso').all()
+    serializer_class = ResponsibleScopeAssignmentSerializer
+    permission_classes = [IsAdminOrSuperAdmin]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        params = self.request.query_params
+        if uid := (params.get('id_usuario') or params.get('usuario')):
+            qs = qs.filter(usuario_id=uid)
+        if cid := params.get('id_comunidad'):
+            qs = qs.filter(comunidad_id=cid)
+        if tid := params.get('id_tipo_caso'):
+            qs = qs.filter(tipo_caso_id=tid)
+        if activo := params.get('activo'):
+            qs = qs.filter(activo=activo.lower() in ('true', '1'))
+        return qs
+
+    def perform_create(self, serializer):
+        AuditService.set_db_actor_session(self.request.user)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        AuditService.set_db_actor_session(self.request.user)
+        serializer.save()

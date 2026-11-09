@@ -19,29 +19,42 @@ if connection.vendor == "postgresql":
         cursor.execute("SELECT to_regclass('plus.roles');")
         roles_table = cursor.fetchone()[0]
 
-    sql_path = "/app/db/init/01_schema_plus.sql"
-    if not roles_table and os.path.exists(sql_path):
-        print("==> Tabla 'plus.roles' no encontrada. Cargando automáticamente /app/db/init/01_schema_plus.sql en PostgreSQL...")
-        db_settings = connection.settings_dict
-        env = os.environ.copy()
-        env["PGPASSWORD"] = str(db_settings.get("PASSWORD") or "")
-        cmd = [
-            "psql",
-            "-v", "ON_ERROR_STOP=1",
-            "-h", str(db_settings.get("HOST") or "db"),
-            "-p", str(db_settings.get("PORT") or "5432"),
-            "-U", str(db_settings.get("USER") or "postgres"),
-            "-d", str(db_settings.get("NAME") or "postgres"),
-            "-f", sql_path,
-        ]
-        subprocess.run(cmd, env=env, check=True)
+    db_settings = connection.settings_dict
+    env = os.environ.copy()
+    env["PGPASSWORD"] = str(db_settings.get("PASSWORD") or "")
+    base_cmd = [
+        "psql",
+        "-v", "ON_ERROR_STOP=1",
+        "-h", str(db_settings.get("HOST") or "db"),
+        "-p", str(db_settings.get("PORT") or "5432"),
+        "-U", str(db_settings.get("USER") or "postgres"),
+        "-d", str(db_settings.get("NAME") or "postgres"),
+    ]
+
+    sql_01 = "/app/db/init/01_schema_plus.sql"
+    if not roles_table and os.path.exists(sql_01):
+        print("==> Tabla 'plus.roles' no encontrada. Cargando /app/db/init/01_schema_plus.sql...")
+        subprocess.run(base_cmd + ["-f", sql_01], env=env, check=True)
         print("==> Esquema SQL 01_schema_plus.sql cargado exitosamente.")
     else:
-        print("==> Esquema 'plus' ya se encuentra inicializado en PostgreSQL.")
+        print("==> Esquema base 'plus' ya inicializado.")
+
+    sql_02 = "/app/db/init/02_ampliaciones_v1_2.sql"
+    if os.path.exists(sql_02):
+        print("==> Aplicando ampliaciones idempotentes /app/db/init/02_ampliaciones_v1_2.sql (AMP-01 a AMP-12)...")
+        subprocess.run(base_cmd + ["-f", sql_02], env=env, check=True)
+        print("==> Ampliaciones AMP-01 a AMP-12 aplicadas exitosamente.")
 PYCODE
 
-echo "==> Sincronizando historial de migraciones de Django (--fake-initial)..."
-python manage.py migrate --fake-initial --noinput
+echo "==> Aplicando tablas base de Django (contenttypes, auth, admin, authtoken, sessions)..."
+python manage.py migrate contenttypes --noinput
+python manage.py migrate auth --noinput
+python manage.py migrate admin --noinput
+python manage.py migrate authtoken --noinput
+python manage.py migrate sessions --noinput
+
+echo "==> Sincronizando historial de migraciones de las apps de dominio PLUS (--fake)..."
+python manage.py migrate --fake --noinput
 
 echo "==> Inicializando catálogos y roles base de PLUS..."
 python manage.py seed_plus_initial

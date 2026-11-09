@@ -351,3 +351,96 @@ class ResponsibleScopeAssignment(models.Model):
 
     def __str__(self):
         return f'Ámbito de {self.usuario.correo}: comunidad={self.comunidad_id}, tipo={self.tipo_caso_id}'
+
+
+class UserProfile(models.Model):
+    """
+    Tabla SQL (AMP-04): plus.perfiles_usuarios
+    Relación 1:1 con plus.usuarios para fotografía y territorio de residencia.
+    """
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        db_column='id_perfil',
+    )
+    usuario = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        db_column='id_usuario',
+        related_name='perfil',
+    )
+    ruta_foto = models.TextField(null=True, blank=True)
+    departamento = models.ForeignKey(
+        'territories.Department',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_departamento',
+        related_name='perfiles_usuarios',
+    )
+    municipio = models.ForeignKey(
+        'territories.Municipality',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_municipio',
+        related_name='perfiles_usuarios',
+    )
+    comunidad = models.ForeignKey(
+        'territories.Community',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_comunidad',
+        related_name='perfiles_usuarios',
+    )
+    fecha_actualizacion = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'perfiles_usuarios'
+
+    def save(self, *args, **kwargs):
+        if self.comunidad_id and not self.municipio_id:
+            self.municipio = self.comunidad.municipio
+        if self.municipio_id and not self.departamento_id:
+            self.departamento = self.municipio.departamento
+        self.fecha_actualizacion = timezone.now()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'Perfil de {self.usuario.correo}'
+
+
+class UserPreference(models.Model):
+    """
+    Tabla SQL (AMP-04): plus.preferencias_usuarios
+    Relación 1:1 con plus.usuarios para preferencias de notificaciones y boletín.
+    """
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        db_column='id_preferencia',
+    )
+    usuario = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        db_column='id_usuario',
+        related_name='preferencias',
+    )
+    notificar_novedades_casos = models.BooleanField(default=True)
+    notificar_mensajes = models.BooleanField(default=True)
+    suscrito_boletin = models.BooleanField(default=False)
+    fecha_actualizacion = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'preferencias_usuarios'
+
+    def save(self, *args, **kwargs):
+        self.fecha_actualizacion = timezone.now()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'Preferencias de {self.usuario.correo}'
+

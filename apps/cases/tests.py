@@ -316,16 +316,16 @@ class CasesMapAndPlatformIntegrationTests(APITestCase):
             tipo_vinculo='resultado',
         )
 
-        news_cat = NewsCategory.objects.create(name='Jornadas Sociales')
+        news_cat = NewsCategory.objects.create(nombre='Jornadas Sociales', slug='jornadas-sociales')
         NewsArticle.objects.create(
-            title='Éxito en la jornada Dulcemanía en El Saladito',
-            summary='Más de 180 niños participaron en la jornada comunitaria.',
-            content='Contenido completo de la noticia institucional.',
-            category=news_cat,
-            related_initiative=initiative,
-            author=self.admin,
-            publication_status=NewsArticle.PublicationStatus.PUBLISHED,
-            is_featured=True,
+            titulo='Éxito en la jornada Dulcemanía en El Saladito',
+            resumen='Más de 180 niños participaron en la jornada comunitaria.',
+            contenido='Contenido completo de la noticia institucional.',
+            categoria=news_cat,
+            iniciativa_relacionada=initiative,
+            autor=self.admin,
+            estado_publicacion=NewsArticle.EstadoPublicacion.PUBLICADA,
+            destacada=True,
         )
 
         # Postulación pública de iniciativa (propuestas_iniciativas) validando consentimiento
@@ -355,3 +355,175 @@ class CasesMapAndPlatformIntegrationTests(APITestCase):
         )
         self.assertEqual(len(home_resp.data['recent_news']), 1)
         self.assertGreaterEqual(AuditLog.objects.count(), 1)
+
+    def test_endpoints_v1_2_expansions_and_contracts(self):
+        """
+        Verifica los contratos de endpoints.md (AMP-01..12, CAT-01..08, ME-01..05, CIT-01..08,
+        ADM-01..11, MAP-01..10, PUB-02..11, REP-01..02, AUD-01..02).
+        """
+        # 1. Catálogos (CAT-01..08)
+        self.client.force_authenticate(user=None)
+        self.assertEqual(self.client.get('/api/v1/catalogs/departments/').status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get('/api/v1/catalogs/municipalities/').status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get('/api/v1/catalogs/communities/').status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get('/api/v1/catalogs/basins/').status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get('/api/v1/catalogs/case-types/').status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get('/api/v1/catalogs/case-categories/').status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get('/api/v1/catalogs/case-statuses/').status_code, status.HTTP_200_OK)
+        opts_resp = self.client.get('/api/v1/catalogs/case-options/')
+        self.assertEqual(opts_resp.status_code, status.HTTP_200_OK)
+        self.assertIn('prioridades', opts_resp.data)
+        self.assertIn('audiencias_seguimiento', opts_resp.data)
+
+        # 2. Perfil y preferencias (ME-01..05)
+        self.client.force_authenticate(user=self.citizen)
+        me_patch = self.client.patch(
+            '/api/v1/me/',
+            {
+                'telefono': '3159876543',
+                'id_departamento': str(self.department.id),
+                'id_municipio': str(self.municipality.id),
+                'id_comunidad': str(self.community.id),
+            },
+            format='json',
+        )
+        self.assertEqual(me_patch.status_code, status.HTTP_200_OK)
+        self.assertEqual(me_patch.data['telefono'], '3159876543')
+        self.assertEqual(str(me_patch.data['perfil']['id_comunidad']), str(self.community.id))
+
+        pref_patch = self.client.patch(
+            '/api/v1/me/preferences/',
+            {'notificar_novedades_casos': False, 'suscrito_boletin': True},
+            format='json',
+        )
+        self.assertEqual(pref_patch.status_code, status.HTTP_200_OK)
+        self.assertFalse(pref_patch.data['notificar_novedades_casos'])
+        self.assertTrue(pref_patch.data['suscrito_boletin'])
+
+        # 3. Creación de caso en /api/v1/me/cases/ con impacto (AMP-06, CIT-02)
+        case_resp = self.client.post(
+            '/api/v1/me/cases/',
+            {
+                'titulo': 'Falta de agua potable en escuela veredal',
+                'descripcion': 'El acueducto rural presenta daños en la bocatoma.',
+                'id_tipo_caso': str(self.category.id),
+                'id_comunidad': str(self.community.id),
+                'latitud': '3.481234',
+                'longitud': '-76.612345',
+                'familias_afectadas': 45,
+                'meses_afectacion': 3,
+                'acepta_tratamiento_datos': True,
+            },
+            format='json',
+        )
+        self.assertEqual(case_resp.status_code, status.HTTP_201_CREATED)
+        case_id = case_resp.data['id']
+        self.assertEqual(case_resp.data['familias_afectadas'], 45)
+
+        # 4. Solicitud de corrección por admin (ADM-07) y respuesta ciudadana con aporte (CIT-08)
+        self.client.force_authenticate(user=self.admin)
+        corr_resp = self.client.post(
+            f'/api/v1/admin/cases/{case_id}/correction-requests/',
+            {
+                'motivo': 'Por favor adjuntar detalle del sector exacto de la bocatoma.',
+                'campos_solicitados': ['direccion_referencia', 'evidencias'],
+            },
+            format='json',
+        )
+        self.assertEqual(corr_resp.status_code, status.HTTP_201_CREATED)
+        corr_id = corr_resp.data['id_solicitud']
+
+        self.client.force_authenticate(user=self.citizen)
+        contrib_resp = self.client.post(
+            f'/api/v1/me/cases/{case_id}/contributions/',
+            {
+                'id_solicitud_correccion': corr_id,
+                'tipo_aporte': 'respuesta_correccion',
+                'mensaje': 'La bocatoma queda a 300 metros arriba del puente de piedra.',
+                'campos_actualizados': {'direccion_referencia': '300m arriba del puente de piedra'},
+            },
+            format='json',
+        )
+        self.assertEqual(contrib_resp.status_code, status.HTTP_201_CREATED)
+
+        # 5. Seguimientos con 3 niveles de audiencia (AMP-07: publico, autor, interno)
+        self.client.force_authenticate(user=self.admin)
+        self.client.post(
+            f'/api/v1/admin/cases/{case_id}/updates/',
+            {'titulo': 'Nota interna', 'descripcion': 'Solo visible para staff.', 'audiencia': 'interno'},
+            format='json',
+        )
+        self.client.post(
+            f'/api/v1/admin/cases/{case_id}/updates/',
+            {'titulo': 'Aviso al ciudadano', 'descripcion': 'Visible para el autor.', 'audiencia': 'autor'},
+            format='json',
+        )
+
+        # El autor ve el seguimiento con audiencia='autor', pero NO el 'interno' (CIT-05)
+        self.client.force_authenticate(user=self.citizen)
+        timeline_resp = self.client.get(f'/api/v1/me/cases/{case_id}/timeline/')
+        self.assertEqual(timeline_resp.status_code, status.HTTP_200_OK)
+        audiencias_autor = [u['audiencia'] for u in timeline_resp.data['seguimientos']]
+        self.assertIn('ciudadano', audiencias_autor)
+        self.assertNotIn('interno', audiencias_autor)
+
+        # 6. Cierre narrativo de caso (ADM-10) y aprobación para mapa público
+        self.client.force_authenticate(user=self.admin)
+        self.client.post(
+            f'/api/v1/admin/cases/{case_id}/moderate/',
+            {'estado_publicacion': 'aprobado', 'prioridad': 'alta'},
+            format='json',
+        )
+        resolve_resp = self.client.post(
+            f'/api/v1/admin/cases/{case_id}/resolve/',
+            {
+                'titulo': 'Bocatoma reparada con la comunidad',
+                'descripcion': 'Se instaló nueva tubería de conducción y filtro.',
+                'resultado_resumen': 'Suministro de agua restablecido para 45 familias.',
+                'publicar_en_mapa': True,
+            },
+            format='json',
+        )
+        self.assertEqual(resolve_resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resolve_resp.data['estado_nombre'], 'resuelto')
+        self.assertEqual(
+            resolve_resp.data['resultado_resumen'],
+            'Suministro de agua restablecido para 45 familias.',
+        )
+
+        # 7. Casos seguidos por el ciudadano (MAP-08..10)
+        self.client.force_authenticate(user=self.citizen)
+        follow_post = self.client.post(f'/api/v1/me/followed-cases/{case_id}/')
+        self.assertIn(follow_post.status_code, (status.HTTP_200_OK, status.HTTP_201_CREATED))
+        follow_list = self.client.get('/api/v1/me/followed-cases/')
+        self.assertEqual(follow_list.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(follow_list.data['results']), 1)
+
+        # 8. Boletín institucional (PUB-11)
+        self.client.force_authenticate(user=None)
+        sub_resp = self.client.post(
+            '/api/v1/public/newsletter/subscribe/',
+            {
+                'correo': 'boletin@comunidad.org',
+                'nombre': 'Líder Comunitario',
+                'intereses': ['territorio', 'iniciativas'],
+                'acepta_tratamiento_datos': True,
+            },
+            format='json',
+        )
+        self.assertEqual(sub_resp.status_code, status.HTTP_201_CREATED)
+
+        # 9. Reportes y exportación CSV (REP-01..02) y Auditoría unificada (AUD-01..02)
+        self.client.force_authenticate(user=self.admin)
+        rep_resp = self.client.get('/api/v1/admin/reports/cases/')
+        self.assertEqual(rep_resp.status_code, status.HTTP_200_OK)
+        self.assertIn('kpis', rep_resp.data)
+
+        csv_resp = self.client.get('/api/v1/admin/reports/cases/export/')
+        self.assertEqual(csv_resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(csv_resp['Content-Type'], 'text/csv; charset=utf-8')
+
+        aud_resp = self.client.get('/api/v1/admin/audit/events/')
+        self.assertEqual(aud_resp.status_code, status.HTTP_200_OK)
+        self.assertIn('kpis', aud_resp.data)
+        self.assertGreaterEqual(aud_resp.data['count'], 1)

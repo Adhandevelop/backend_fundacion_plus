@@ -9,8 +9,14 @@ from core.gis import PostGISPointField, make_geojson_point, obfuscate_coordinate
 
 class CaseCategory(models.Model):
     """
-    Tabla SQL: plus.tipos_caso
+    Tabla SQL: plus.tipos_caso (Ampliada con AMP-12: naturaleza)
     """
+
+    class Naturaleza(models.TextChoices):
+        PROBLEMATICA = 'problematica', 'Problemática'
+        PROYECTO_INICIATIVA = 'proyecto_iniciativa', 'Proyecto / Iniciativa'
+        OTRO = 'otro', 'Otro'
+
     id = models.UUIDField(
         primary_key=True,
         default=uuid.uuid4,
@@ -20,6 +26,11 @@ class CaseCategory(models.Model):
     nombre = models.CharField(max_length=100)
     descripcion = models.TextField(null=True, blank=True)
     categoria = models.CharField(max_length=50, default='general')
+    naturaleza = models.CharField(
+        max_length=30,
+        choices=Naturaleza.choices,
+        default=Naturaleza.PROBLEMATICA,
+    )
     activo = models.BooleanField(default=True)
 
     class Meta:
@@ -64,9 +75,6 @@ class CaseStatus(models.Model):
     class Meta:
         db_table = 'estados_caso'
         ordering = ['orden']
-        constraints = [
-            models.CheckConstraint(check=Q(orden__gt=0), name='ck_estado_caso_orden_pos'),
-        ]
 
     @property
     def id_estado(self):
@@ -117,7 +125,7 @@ class CaseStatus(models.Model):
 
 class Case(models.Model):
     """
-    Tabla SQL: plus.casos
+    Tabla SQL: plus.casos (Ampliada con AMP-05 y AMP-11)
     """
 
     class Prioridad(models.TextChoices):
@@ -186,6 +194,31 @@ class Case(models.Model):
         help_text='Coordenada geográfica PostGIS geometry(Point, 4326)',
     )
     direccion_referencia = models.TextField(null=True, blank=True)
+
+    # AMP-05: Cantidades de afectación (NULL = desconocido, >= 0 = valor reportado)
+    familias_afectadas = models.PositiveIntegerField(null=True, blank=True)
+    meses_afectacion = models.PositiveIntegerField(null=True, blank=True)
+
+    # AMP-11: Resolución narrativa y trazabilidad del resultado vigente
+    resultado_resumen = models.TextField(null=True, blank=True)
+    seguimiento_resolucion = models.ForeignKey(
+        'tracking.CaseUpdate',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_seguimiento_resolucion',
+        related_name='casos_resueltos',
+    )
+    usuario_resolucion = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_usuario_resolucion',
+        related_name='casos_resueltos',
+    )
+    fecha_resolucion = models.DateTimeField(null=True, blank=True)
+
     fecha_creacion = models.DateTimeField(default=timezone.now)
     fecha_actualizacion = models.DateTimeField(default=timezone.now)
     fecha_aprobacion = models.DateTimeField(null=True, blank=True)
@@ -193,12 +226,6 @@ class Case(models.Model):
     class Meta:
         db_table = 'casos'
         ordering = ['-fecha_creacion']
-        constraints = [
-            models.CheckConstraint(
-                check=~Q(estado_publicacion='aprobado') | Q(fecha_aprobacion__isnull=False),
-                name='ck_caso_aprobacion',
-            ),
-        ]
         indexes = [
             models.Index(fields=['comunidad', 'estado'], name='ix_casos_comunidad_estado'),
             models.Index(fields=['tipo_caso'], name='ix_casos_tipo'),
@@ -272,6 +299,12 @@ class Case(models.Model):
     def active_assignment(self):
         return self.asignaciones.filter(activo=True).select_related('responsable').first()
 
+    @property
+    def active_correction_request(self):
+        return self.solicitudes_correccion.filter(
+            estado=CaseCorrectionRequest.Estado.ABIERTA
+        ).order_by('-fecha_solicitud').first()
+
     def __str__(self):
         return f'{self.codigo} - {self.titulo}'
 
@@ -312,10 +345,6 @@ class CaseAssignment(models.Model):
         db_table = 'asignaciones_casos'
         ordering = ['-fecha_asignacion']
         constraints = [
-            models.CheckConstraint(
-                check=Q(fecha_finalizacion__isnull=True) | Q(fecha_finalizacion__gte=F('fecha_asignacion')),
-                name='ck_fin_asignacion',
-            ),
             models.UniqueConstraint(
                 fields=['caso'],
                 condition=Q(activo=True),
@@ -335,9 +364,114 @@ class CaseAssignment(models.Model):
         return f'{self.caso.codigo} -> {self.responsable.correo}'
 
 
+class CaseCorrectionRequest(models.Model):
+    """
+    Tabla SQL (AMP-06): plus.solicitudes_correccion
+    Requerimientos formales de subsanación sobre un caso.
+    """
+
+    class Estado(models.TextChoices):
+        ABIERTA = 'abierta', 'Abierta'
+        RESPONDIDA = 'respondida', 'Respondida'
+        CERRADA = 'cerrada', 'Cerrada'
+        CANCELADA = 'cancelada', 'Cancelada'
+
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        db_column='id_solicitud',
+    )
+    caso = models.ForeignKey(
+        Case,
+        on_delete=models.CASCADE,
+        db_column='id_caso',
+        related_name='solicitudes_correccion',
+    )
+    solicitante = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.RESTRICT,
+        db_column='id_solicitante',
+        related_name='solicitudes_correccion_creadas',
+    )
+    motivo = models.TextField()
+    estado = models.CharField(
+        max_length=20,
+        choices=Estado.choices,
+        default=Estado.ABIERTA,
+    )
+    respuesta = models.TextField(null=True, blank=True)
+    revisor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_revisor',
+        related_name='solicitudes_correccion_revisadas',
+    )
+    fecha_solicitud = models.DateTimeField(default=timezone.now)
+    fecha_respuesta = models.DateTimeField(null=True, blank=True)
+    fecha_revision = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'solicitudes_correccion'
+        ordering = ['-fecha_solicitud']
+        indexes = [
+            models.Index(fields=['caso', 'estado'], name='ix_solicitudes_corr_caso'),
+        ]
+
+    def __str__(self):
+        return f'Solicitud de corrección {self.estado} en {self.caso.codigo}'
+
+
+class CaseContribution(models.Model):
+    """
+    Tabla SQL (AMP-07): plus.aportes_caso
+    Aportes privados de información o respuesta del ciudadano al expediente.
+    """
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        db_column='id_aporte',
+    )
+    caso = models.ForeignKey(
+        Case,
+        on_delete=models.CASCADE,
+        db_column='id_caso',
+        related_name='aportes',
+    )
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.RESTRICT,
+        db_column='id_usuario',
+        related_name='aportes_caso',
+    )
+    solicitud_correccion = models.ForeignKey(
+        CaseCorrectionRequest,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_solicitud_correccion',
+        related_name='aportes',
+    )
+    contenido = models.TextField()
+    fecha_creacion = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'aportes_caso'
+        ordering = ['-fecha_creacion']
+        indexes = [
+            models.Index(fields=['caso', '-fecha_creacion'], name='ix_aportes_caso_fecha'),
+        ]
+
+    def __str__(self):
+        return f'Aporte en {self.caso.codigo} por {self.usuario.correo}'
+
+
 class CaseEvidence(models.Model):
     """
-    Tabla SQL: plus.evidencias
+    Tabla SQL: plus.evidencias (Ampliada con AMP-07 y AMP-10)
     """
 
     class TipoArchivo(models.TextChoices):
@@ -345,6 +479,16 @@ class CaseEvidence(models.Model):
         VIDEO = 'video', 'Video'
         AUDIO = 'audio', 'Audio'
         DOCUMENTO = 'documento', 'Documento'
+
+    class Audiencia(models.TextChoices):
+        PUBLICO = 'publico', 'Público'
+        CIUDADANO = 'ciudadano', 'Ciudadano / Equipo'
+        PRIVADO = 'privado', 'Privado / Interno'
+
+    class EstadoRevision(models.TextChoices):
+        PENDIENTE = 'pendiente', 'Pendiente'
+        APROBADA = 'aprobada', 'Aprobada'
+        RECHAZADA = 'rechazada', 'Rechazada'
 
     id = models.UUIDField(
         primary_key=True,
@@ -364,6 +508,14 @@ class CaseEvidence(models.Model):
         db_column='id_usuario',
         related_name='evidencias_subidas',
     )
+    aporte = models.ForeignKey(
+        CaseContribution,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_aporte',
+        related_name='evidencias',
+    )
     tipo_archivo = models.CharField(
         max_length=30,
         choices=TipoArchivo.choices,
@@ -371,6 +523,22 @@ class CaseEvidence(models.Model):
     )
     ruta_archivo = models.TextField()
     descripcion = models.TextField(null=True, blank=True)
+
+    # AMP-10: Visibilidad/audiencia individual, estado de revisión y metadatos de almacenamiento
+    audiencia = models.CharField(
+        max_length=20,
+        choices=Audiencia.choices,
+        default=Audiencia.CIUDADANO,
+    )
+    estado_revision = models.CharField(
+        max_length=20,
+        choices=EstadoRevision.choices,
+        default=EstadoRevision.PENDIENTE,
+    )
+    nombre_original = models.CharField(max_length=255, null=True, blank=True)
+    mime_type = models.CharField(max_length=100, null=True, blank=True)
+    tamano_bytes = models.BigIntegerField(null=True, blank=True)
+
     fecha_subida = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -386,3 +554,41 @@ class CaseEvidence(models.Model):
 
     def __str__(self):
         return f'Evidencia {self.tipo_archivo} en {self.caso.codigo}'
+
+
+class FollowedCase(models.Model):
+    """
+    Tabla SQL (AMP-03): plus.casos_seguidos
+    Relación usuario-caso para seguimiento de novedades públicas.
+    """
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        db_column='id_seguimiento_usuario',
+    )
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        db_column='id_usuario',
+        related_name='casos_seguidos',
+    )
+    caso = models.ForeignKey(
+        Case,
+        on_delete=models.CASCADE,
+        db_column='id_caso',
+        related_name='seguidores',
+    )
+    activo = models.BooleanField(default=True)
+    fecha_creacion = models.DateTimeField(default=timezone.now)
+    fecha_baja = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'casos_seguidos'
+        ordering = ['-fecha_creacion']
+        constraints = [
+            models.UniqueConstraint(fields=['usuario', 'caso'], name='uq_usuario_caso_seguido'),
+        ]
+
+    def __str__(self):
+        return f'{self.usuario.correo} sigue {self.caso.codigo}'

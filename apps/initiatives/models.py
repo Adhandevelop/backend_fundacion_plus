@@ -63,20 +63,6 @@ class Initiative(models.Model):
     class Meta:
         db_table = 'iniciativas'
         ordering = ['orden_destacado', '-fecha_publicacion', '-fecha_creacion']
-        constraints = [
-            models.CheckConstraint(
-                check=~Q(estado_publicacion='publicada') | Q(fecha_publicacion__isnull=False),
-                name='ck_iniciativa_fecha_pub',
-            ),
-            models.CheckConstraint(
-                check=Q(destacada=False) | Q(estado_publicacion='publicada'),
-                name='ck_iniciativa_destacada',
-            ),
-            models.CheckConstraint(
-                check=Q(orden_destacado__isnull=True) | Q(orden_destacado__gt=0),
-                name='ck_iniciativa_orden',
-            ),
-        ]
         indexes = [
             models.Index(fields=['categoria', 'estado_publicacion'], name='ix_iniciativas_categoria'),
         ]
@@ -157,10 +143,6 @@ class InitiativeEdition(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['iniciativa', 'anio'], name='uq_edicion_anual'),
             models.UniqueConstraint(fields=['iniciativa', 'id'], name='uq_edicion_pertenencia'),
-            models.CheckConstraint(
-                check=Q(anio__gte=2000, anio__lte=2200),
-                name='ck_edicion_anio_rango',
-            ),
         ]
         indexes = [
             models.Index(fields=['iniciativa', '-anio'], name='ix_ediciones_iniciativa_anio'),
@@ -219,12 +201,6 @@ class InitiativeMedia(models.Model):
     class Meta:
         db_table = 'iniciativa_multimedia'
         ordering = ['orden', '-fecha_subida']
-        constraints = [
-            models.CheckConstraint(
-                check=Q(es_portada=False) | Q(tipo='imagen'),
-                name='ck_portada_imagen',
-            ),
-        ]
         indexes = [
             models.Index(fields=['iniciativa', 'orden'], name='ix_multimedia_iniciativa'),
             models.Index(fields=['edicion', 'orden'], name='ix_multimedia_edicion'),
@@ -275,9 +251,6 @@ class InitiativeMetric(models.Model):
     class Meta:
         db_table = 'iniciativa_indicadores'
         ordering = ['orden', 'nombre']
-        constraints = [
-            models.CheckConstraint(check=Q(valor__gte=0), name='ck_indicador_valor'),
-        ]
         indexes = [
             models.Index(fields=['edicion', 'orden'], name='ix_indicadores_edicion'),
         ]
@@ -386,12 +359,6 @@ class InitiativeActivity(models.Model):
     class Meta:
         db_table = 'iniciativa_actividades'
         ordering = ['-fecha_inicio']
-        constraints = [
-            models.CheckConstraint(
-                check=Q(fecha_fin__isnull=True) | Q(fecha_fin__gte=F('fecha_inicio')),
-                name='ck_actividad_fechas',
-            ),
-        ]
         indexes = [
             models.Index(fields=['edicion', 'fecha_inicio'], name='ix_actividades_edicion_fecha'),
             models.Index(fields=['comunidad'], name='ix_actividades_comunidad'),

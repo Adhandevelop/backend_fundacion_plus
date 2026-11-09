@@ -1,14 +1,26 @@
 import uuid
 from django.conf import settings
 from django.db import models
-from django.db.models import F, Q
 from django.utils import timezone
 
 
 class CaseUpdate(models.Model):
     """
-    Tabla SQL: plus.seguimientos
+    Tabla SQL: plus.seguimientos (Ampliada con AMP-08: titulo, audiencia y tipo_evento)
     """
+
+    class Audiencia(models.TextChoices):
+        PUBLICO = 'publico', 'Público'
+        CIUDADANO = 'ciudadano', 'Ciudadano / Equipo'
+        INTERNO = 'interno', 'Interno'
+
+    class TipoEvento(models.TextChoices):
+        SEGUIMIENTO = 'seguimiento', 'Seguimiento'
+        RESOLUCION = 'resolucion', 'Resolución'
+        CIERRE = 'cierre', 'Cierre'
+        NOTA_INTERNA = 'nota_interna', 'Nota interna'
+        APORTE_CIUDADANO = 'aporte_ciudadano', 'Aporte ciudadano'
+
     id = models.UUIDField(
         primary_key=True,
         default=uuid.uuid4,
@@ -27,7 +39,18 @@ class CaseUpdate(models.Model):
         db_column='id_usuario',
         related_name='seguimientos_registrados',
     )
+    titulo = models.CharField(max_length=200, null=True, blank=True)
     descripcion = models.TextField()
+    audiencia = models.CharField(
+        max_length=20,
+        choices=Audiencia.choices,
+        default=Audiencia.INTERNO,
+    )
+    tipo_evento = models.CharField(
+        max_length=30,
+        choices=TipoEvento.choices,
+        default=TipoEvento.SEGUIMIENTO,
+    )
     fecha_seguimiento = models.DateTimeField(default=timezone.now)
     visible_publicamente = models.BooleanField(default=False)
 
@@ -37,6 +60,14 @@ class CaseUpdate(models.Model):
         indexes = [
             models.Index(fields=['caso', '-fecha_seguimiento'], name='ix_seguimientos_caso_fecha'),
         ]
+
+    def save(self, *args, **kwargs):
+        # Si se indicó explícitamente visible_publicamente=True y audiencia sigue en default, elevar a 'publico'
+        if self.visible_publicamente and self.audiencia == self.Audiencia.INTERNO:
+            self.audiencia = self.Audiencia.PUBLICO
+        # Sincronizar visible_publicamente desde audiencia (regla AMP-08: una sola fuente de verdad)
+        self.visible_publicamente = self.audiencia == self.Audiencia.PUBLICO
+        super().save(*args, **kwargs)
 
     @property
     def id_seguimiento(self):
@@ -90,12 +121,6 @@ class CaseStatusHistory(models.Model):
     class Meta:
         db_table = 'historial_estados'
         ordering = ['-fecha_cambio']
-        constraints = [
-            models.CheckConstraint(
-                check=Q(estado_anterior__isnull=True) | ~Q(estado_anterior=F('estado_nuevo')),
-                name='ck_historial_distinto',
-            ),
-        ]
         indexes = [
             models.Index(fields=['caso', '-fecha_cambio'], name='ix_historial_caso_fecha'),
         ]

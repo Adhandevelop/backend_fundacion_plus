@@ -1,10 +1,17 @@
+import uuid as uuid_lib
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, viewsets
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
 from apps.accounts.permissions import IsEditorOrAdmin
 from apps.audit.services import AuditService
 from apps.initiatives.models import (
     Initiative,
     InitiativeActivity,
+    InitiativeCaseLink,
+    InitiativeCommunity,
     InitiativeEdition,
     InitiativeMedia,
     InitiativeMetric,
@@ -12,6 +19,8 @@ from apps.initiatives.models import (
 from apps.initiatives.serializers import (
     AdminInitiativeSerializer,
     InitiativeActivitySerializer,
+    InitiativeCaseLinkSerializer,
+    InitiativeCommunitySerializer,
     InitiativeDetailSerializer,
     InitiativeEditionSerializer,
     InitiativeListSerializer,
@@ -20,7 +29,40 @@ from apps.initiatives.serializers import (
 )
 
 
+def resolve_published_initiative(lookup: str) -> Initiative:
+    qs = Initiative.objects.filter(
+        estado_publicacion=Initiative.EstadoPublicacion.PUBLICADA
+    ).prefetch_related('ediciones__indicadores', 'ediciones__actividades', 'multimedia')
+    by_slug = qs.filter(slug=lookup).first()
+    if by_slug:
+        return by_slug
+    try:
+        uuid_val = uuid_lib.UUID(str(lookup).strip())
+        return get_object_or_404(qs, pk=uuid_val)
+    except (ValueError, TypeError):
+        return get_object_or_404(qs, slug=lookup)
+
+
+class PublicInitiativeCategoryListView(APIView):
+    """
+    CAT-08: GET /api/v1/catalogs/initiative-categories/
+    Retorna valores distintos de `iniciativas.categoria` para programas publicados.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        cats = list(
+            dict.fromkeys(
+                Initiative.objects.filter(estado_publicacion=Initiative.EstadoPublicacion.PUBLICADA)
+                .order_by('categoria')
+                .values_list('categoria', flat=True)
+            )
+        )
+        return Response({'categories': cats})
+
+
 class PublicInitiativeListView(generics.ListAPIView):
+    """PUB-05: GET /api/v1/public/initiatives/"""
     serializer_class = InitiativeListSerializer
     permission_classes = [permissions.AllowAny]
 
@@ -33,24 +75,78 @@ class PublicInitiativeListView(generics.ListAPIView):
             qs = qs.filter(destacada=destacada.lower() == 'true')
         if categoria := (params.get('categoria') or params.get('category')):
             qs = qs.filter(categoria__iexact=categoria)
+        if anio := params.get('anio'):
+            qs = qs.filter(ediciones__anio=anio).distinct()
         if search := params.get('search'):
-            qs = qs.filter(titulo__icontains=search) | qs.filter(descripcion_corta__icontains=search)
+            qs = qs.filter(Q(titulo__icontains=search) | Q(descripcion_corta__icontains=search))
         return qs
 
 
 class PublicInitiativeDetailView(generics.RetrieveAPIView):
+    """PUB-06: GET /api/v1/public/initiatives/{slug}/"""
     serializer_class = InitiativeDetailSerializer
     permission_classes = [permissions.AllowAny]
 
     def get_object(self):
-        lookup = self.kwargs['lookup']
-        qs = Initiative.objects.filter(
-            estado_publicacion=Initiative.EstadoPublicacion.PUBLICADA
-        ).prefetch_related('ediciones__indicadores', 'ediciones__actividades', 'multimedia')
-        obj = qs.filter(slug=lookup).first()
-        if not obj:
-            obj = get_object_or_404(qs, pk=lookup)
-        return obj
+        return resolve_published_initiative(self.kwargs['lookup'])
+
+
+class PublicInitiativeGalleryView(generics.ListAPIView):
+    """PUB-07: GET /api/v1/public/initiatives/{id}/gallery/"""
+    serializer_class = InitiativeMediaSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        initiative = resolve_published_initiative(self.kwargs['lookup'])
+        qs = initiative.multimedia.all()
+        if edicion_id := self.request.query_params.get('id_edicion'):
+            if edicion_id.lower() in ('null', 'general'):
+                qs = qs.filter(edicion__isnull=True)
+            else:
+                qs = qs.filter(edicion_id=edicion_id)
+        return qs
+
+
+class PublicInitiativeEditionListView(generics.ListAPIView):
+    """INI-01: GET /api/v1/public/initiatives/{id}/editions/"""
+    serializer_class = InitiativeEditionSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        initiative = resolve_published_initiative(self.kwargs['lookup'])
+        qs = initiative.ediciones.prefetch_related('indicadores', 'actividades', 'comunidades_vinculadas').all()
+        if anio := self.request.query_params.get('anio'):
+            qs = qs.filter(anio=anio)
+        return qs
+
+
+class PublicInitiativeEditionDetailView(generics.RetrieveAPIView):
+    """
+    INI-02: GET /api/v1/public/initiatives/{id}/editions/{edition_id}/
+    Comprueba estrictamente la pertenencia de la edición al programa indicado.
+    """
+    serializer_class = InitiativeEditionSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_object(self):
+        initiative = resolve_published_initiative(self.kwargs['lookup'])
+        return get_object_or_404(
+            initiative.ediciones.prefetch_related('indicadores', 'actividades', 'comunidades_vinculadas'),
+            pk=self.kwargs['edition_id'],
+        )
+
+
+class PublicInitiativeEditionActivityListView(generics.ListAPIView):
+    """
+    INI-03: GET /api/v1/public/initiatives/{id}/editions/{edition_id}/activities/
+    """
+    serializer_class = InitiativeActivitySerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        initiative = resolve_published_initiative(self.kwargs['lookup'])
+        edition = get_object_or_404(initiative.ediciones.all(), pk=self.kwargs['edition_id'])
+        return edition.actividades.select_related('comunidad', 'responsable').all()
 
 
 class AdminInitiativeViewSet(viewsets.ModelViewSet):
@@ -99,6 +195,12 @@ class AdminInitiativeEditionViewSet(viewsets.ModelViewSet):
     serializer_class = InitiativeEditionSerializer
     permission_classes = [IsEditorOrAdmin]
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if init_id := self.request.query_params.get('id_iniciativa'):
+            qs = qs.filter(iniciativa_id=init_id)
+        return qs
+
     def perform_create(self, serializer):
         AuditService.set_db_actor_session(self.request.user)
         serializer.save()
@@ -123,4 +225,16 @@ class AdminInitiativeMediaViewSet(viewsets.ModelViewSet):
 class AdminInitiativeMetricViewSet(viewsets.ModelViewSet):
     queryset = InitiativeMetric.objects.select_related('edicion').all()
     serializer_class = InitiativeMetricSerializer
+    permission_classes = [IsEditorOrAdmin]
+
+
+class AdminInitiativeCommunityViewSet(viewsets.ModelViewSet):
+    queryset = InitiativeCommunity.objects.select_related('edicion', 'comunidad').all()
+    serializer_class = InitiativeCommunitySerializer
+    permission_classes = [IsEditorOrAdmin]
+
+
+class AdminInitiativeCaseLinkViewSet(viewsets.ModelViewSet):
+    queryset = InitiativeCaseLink.objects.select_related('edicion', 'caso').all()
+    serializer_class = InitiativeCaseLinkSerializer
     permission_classes = [IsEditorOrAdmin]

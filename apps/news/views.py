@@ -1,59 +1,69 @@
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, viewsets
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import User
-from apps.accounts.permissions import IsAdminOrSuperAdmin, IsEditorOrAdmin
+from apps.accounts.permissions import IsEditorOrAdmin, IsResponsibleOrAdmin
 from apps.audit.services import AuditService
-from apps.cases.models import Case, CaseStatus
+from apps.cases.models import Case, CaseCorrectionRequest, CaseStatus
 from apps.communications.models import CaseComment, EventProposal, SiteSetting
 from apps.initiatives.models import Initiative, InitiativeActivity
 from apps.initiatives.serializers import InitiativeListSerializer
-from apps.news.models import NewsArticle, NewsCategory
+from apps.news.models import NewsArticle, NewsCategory, NewsMedia
 from apps.news.serializers import (
     NewsArticleDetailSerializer,
     NewsArticleListSerializer,
     NewsCategorySerializer,
+    NewsMediaSerializer,
 )
 from apps.territories.models import Community, Municipality
 
 
 class PublicNewsCategoryListView(generics.ListAPIView):
-    queryset = NewsCategory.objects.filter(is_active=True)
+    """CAT-07 (AMP-01): GET /api/v1/catalogs/news-categories/ (y /api/v1/public/news/categories/)"""
+    queryset = NewsCategory.objects.filter(activa=True)
     serializer_class = NewsCategorySerializer
     permission_classes = [permissions.AllowAny]
     pagination_class = None
 
 
 class PublicNewsListView(generics.ListAPIView):
+    """PUB-03 (AMP-01): GET /api/v1/public/news/"""
     serializer_class = NewsArticleListSerializer
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        qs = NewsArticle.objects.filter(
-            publication_status=NewsArticle.PublicationStatus.PUBLISHED
-        ).select_related('category', 'author', 'related_initiative')
+        qs = (
+            NewsArticle.objects.filter(estado_publicacion=NewsArticle.EstadoPublicacion.PUBLICADA)
+            .select_related('categoria', 'autor', 'iniciativa_relacionada')
+            .prefetch_related('multimedia')
+        )
         params = self.request.query_params
-        if category := params.get('category'):
-            qs = qs.filter(category_id=category)
-        if is_featured := params.get('is_featured'):
-            qs = qs.filter(is_featured=is_featured.lower() == 'true')
+        if cat := (params.get('id_categoria') or params.get('categoria') or params.get('category')):
+            qs = qs.filter(categoria_id=cat)
+        if cat_slug := params.get('categoria_slug'):
+            qs = qs.filter(categoria__slug=cat_slug)
+        if destacada := (params.get('destacada') or params.get('is_featured')):
+            qs = qs.filter(destacada=destacada.lower() == 'true')
         if search := params.get('search'):
-            qs = qs.filter(title__icontains=search) | qs.filter(summary__icontains=search)
+            qs = qs.filter(Q(titulo__icontains=search) | Q(extracto__icontains=search))
         return qs
 
 
 class PublicNewsDetailView(generics.RetrieveAPIView):
+    """PUB-04 (AMP-01): GET /api/v1/public/news/{slug}/"""
     serializer_class = NewsArticleDetailSerializer
     permission_classes = [permissions.AllowAny]
 
     def get_object(self):
         lookup = self.kwargs['lookup']
-        qs = NewsArticle.objects.filter(
-            publication_status=NewsArticle.PublicationStatus.PUBLISHED
-        ).select_related('category', 'author', 'related_initiative')
+        qs = (
+            NewsArticle.objects.filter(estado_publicacion=NewsArticle.EstadoPublicacion.PUBLICADA)
+            .select_related('categoria', 'autor', 'iniciativa_relacionada')
+            .prefetch_related('multimedia')
+        )
         article = qs.filter(slug=lookup).first()
         if not article:
             article = get_object_or_404(qs, pk=lookup)
@@ -71,30 +81,47 @@ class AdminNewsArticleViewSet(viewsets.ModelViewSet):
     permission_classes = [IsEditorOrAdmin]
 
     def get_queryset(self):
-        qs = NewsArticle.objects.select_related('category', 'author', 'related_initiative').all()
-        if pub_status := self.request.query_params.get('publication_status'):
-            qs = qs.filter(publication_status=pub_status.upper())
+        qs = (
+            NewsArticle.objects.select_related('categoria', 'autor', 'iniciativa_relacionada')
+            .prefetch_related('multimedia')
+            .all()
+        )
+        params = self.request.query_params
+        if pub_status := (params.get('estado_publicacion') or params.get('publication_status')):
+            status_map = {
+                'draft': NewsArticle.EstadoPublicacion.BORRADOR,
+                'published': NewsArticle.EstadoPublicacion.PUBLICADA,
+                'archived': NewsArticle.EstadoPublicacion.ARCHIVADA,
+            }
+            resolved = status_map.get(pub_status.lower(), pub_status.lower())
+            qs = qs.filter(estado_publicacion=resolved)
         return qs
 
     def perform_create(self, serializer):
         AuditService.set_db_actor_session(self.request.user)
-        article = serializer.save(author=self.request.user)
+        article = serializer.save(autor=self.request.user)
         AuditService.log(
             actor=self.request.user,
             action='insert',
             module='noticias',
-            target_model='news_articles',
+            target_model='noticias',
             target_id=article.pk,
-            description=f'Creación de noticia: {article.title}',
+            description=f'Creación de noticia: {article.titulo}',
             request=self.request,
         )
 
 
+class AdminNewsMediaViewSet(viewsets.ModelViewSet):
+    queryset = NewsMedia.objects.select_related('noticia').all()
+    serializer_class = NewsMediaSerializer
+    permission_classes = [IsEditorOrAdmin]
+
+
 class PublicHomeSummaryView(APIView):
     """
-    GET /api/v1/public/home/
+    PUB-02: GET /api/v1/public/home/
     Agrega datos institucionales desde plus.configuracion_plataforma, indicadores reales validados,
-    iniciativas destacadas (plus.iniciativas) y noticias recientes para el Home en Angular.
+    iniciativas destacadas (plus.iniciativas) y noticias recientes (plus.noticias) para el Home en Angular.
     """
     permission_classes = [permissions.AllowAny]
 
@@ -104,9 +131,11 @@ class PublicHomeSummaryView(APIView):
             estado_publicacion=Initiative.EstadoPublicacion.PUBLICADA
         ).prefetch_related('multimedia', 'ediciones__indicadores')
         featured_initiatives = published_initiatives.filter(destacada=True)[:6]
-        recent_news = NewsArticle.objects.filter(
-            publication_status=NewsArticle.PublicationStatus.PUBLISHED
-        ).select_related('category', 'author', 'related_initiative')[:4]
+        recent_news = (
+            NewsArticle.objects.filter(estado_publicacion=NewsArticle.EstadoPublicacion.PUBLICADA)
+            .select_related('categoria', 'autor', 'iniciativa_relacionada')
+            .prefetch_related('multimedia')[:4]
+        )
         settings_map = {s.clave: s.valor for s in SiteSetting.objects.all()}
 
         default_institution = {
@@ -146,10 +175,10 @@ class PublicHomeSummaryView(APIView):
 
 class AdminMetricsDashboardView(APIView):
     """
-    GET /api/v1/admin/metrics/dashboard/
-    Indicadores operativos del Panel Administrativo desde las 30 tablas de `plus`.
+    ADM-01: GET /api/v1/admin/dashboard/ (y /api/v1/admin/metrics/dashboard/)
+    Indicadores operativos del Panel Administrativo desde las tablas de `plus`.
     """
-    permission_classes = [IsAdminOrSuperAdmin]
+    permission_classes = [IsResponsibleOrAdmin]
 
     def get(self, request):
         cases_by_pub = dict(
@@ -167,6 +196,9 @@ class AdminMetricsDashboardView(APIView):
                 'by_estado_publicacion': cases_by_pub,
                 'by_estado_operativo': cases_by_estado,
                 'by_prioridad': cases_by_prio,
+                'open_correction_requests': CaseCorrectionRequest.objects.filter(
+                    estado=CaseCorrectionRequest.Estado.ABIERTA
+                ).count(),
             },
             'moderation_queues': {
                 'pending_cases': Case.objects.filter(estado_publicacion=Case.EstadoPublicacion.PENDIENTE).count(),
@@ -189,7 +221,7 @@ class AdminMetricsDashboardView(APIView):
                     estado_publicacion=Initiative.EstadoPublicacion.BORRADOR
                 ).count(),
                 'news_published': NewsArticle.objects.filter(
-                    publication_status=NewsArticle.PublicationStatus.PUBLISHED
+                    estado_publicacion=NewsArticle.EstadoPublicacion.PUBLICADA
                 ).count(),
             },
             'users': {

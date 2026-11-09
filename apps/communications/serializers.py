@@ -3,8 +3,12 @@ from apps.communications.models import (
     CaseComment,
     CaseMessage,
     EventProposal,
+    LegalAcceptance,
+    LegalDocument,
+    NewsletterSubscription,
     SiteSetting,
 )
+from apps.territories.models import Community
 
 
 class PublicCaseCommentSerializer(serializers.ModelSerializer):
@@ -127,6 +131,12 @@ class CaseMessageSerializer(serializers.ModelSerializer):
 
 class EventProposalSerializer(serializers.ModelSerializer):
     id_propuesta = serializers.UUIDField(source='id', read_only=True)
+    id_comunidad = serializers.PrimaryKeyRelatedField(
+        source='comunidad',
+        queryset=Community.objects.filter(activo=True),
+        required=False,
+        allow_null=True,
+    )
     comunidad_nombre = serializers.CharField(source='comunidad.nombre', read_only=True)
 
     class Meta:
@@ -136,6 +146,7 @@ class EventProposalSerializer(serializers.ModelSerializer):
             'id_propuesta',
             'usuario',
             'comunidad',
+            'id_comunidad',
             'comunidad_nombre',
             'nombre_contacto',
             'telefono_contacto',
@@ -172,6 +183,31 @@ class EventProposalSerializer(serializers.ModelSerializer):
             )
         return value
 
+    def validate(self, attrs):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None) if request else None
+        has_auth_user = bool(user and user.is_authenticated)
+
+        if not self.instance:
+            if not attrs.get('acepta_tratamiento_datos'):
+                raise serializers.ValidationError(
+                    {'acepta_tratamiento_datos': 'Debe aceptar el tratamiento de datos personales.'}
+                )
+            comunidad = attrs.get('comunidad')
+            comunidad_dec = (attrs.get('comunidad_declarada') or '').strip()
+            if not comunidad and not comunidad_dec:
+                raise serializers.ValidationError(
+                    {'comunidad': 'Debe indicar una comunidad del catálogo o una comunidad_declarada.'}
+                )
+            if not has_auth_user:
+                nombre = (attrs.get('nombre_contacto') or '').strip()
+                telefono = (attrs.get('telefono_contacto') or '').strip()
+                if not nombre or not telefono:
+                    raise serializers.ValidationError(
+                        {'nombre_contacto': 'Nombre y teléfono de contacto son obligatorios para postulaciones públicas.'}
+                    )
+        return attrs
+
 
 class AdminEventProposalSerializer(EventProposalSerializer):
     class Meta(EventProposalSerializer.Meta):
@@ -199,3 +235,47 @@ class SiteSettingSerializer(serializers.ModelSerializer):
             'clave': {'required': False},
             'valor': {'required': False},
         }
+
+
+class LegalDocumentSerializer(serializers.ModelSerializer):
+    id_documento = serializers.UUIDField(source='id', read_only=True)
+
+    class Meta:
+        model = LegalDocument
+        fields = [
+            'id',
+            'id_documento',
+            'tipo',
+            'version',
+            'titulo',
+            'contenido',
+            'vigente',
+            'fecha_vigencia',
+        ]
+        read_only_fields = fields
+
+
+class NewsletterSubscriptionSerializer(serializers.Serializer):
+    """PUB-09 (AMP-02): POST /api/v1/public/newsletter-subscriptions/"""
+    nombre = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    correo = serializers.EmailField(max_length=150, required=False)
+    email = serializers.EmailField(max_length=150, required=False)
+    acepta_tratamiento_datos = serializers.BooleanField(default=True, required=False)
+
+    def validate(self, attrs):
+        correo = (attrs.get('correo') or attrs.get('email') or '').strip().lower()
+        if not correo:
+            raise serializers.ValidationError({'correo': 'El correo electrónico es obligatorio.'})
+        if not attrs.get('acepta_tratamiento_datos', True):
+            raise serializers.ValidationError(
+                {'acepta_tratamiento_datos': 'Debe aceptar la política de tratamiento de datos para suscribirse.'}
+            )
+        attrs['resolved_correo'] = correo
+        return attrs
+
+
+class NewsletterTokenActionSerializer(serializers.Serializer):
+    """PUB-10 y PUB-11: Confirmación o baja de boletín."""
+    token = serializers.CharField(required=False, allow_blank=True)
+    correo = serializers.EmailField(required=False)
+    email = serializers.EmailField(required=False)

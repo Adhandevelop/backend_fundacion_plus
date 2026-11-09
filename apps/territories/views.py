@@ -96,29 +96,54 @@ class PublicDepartmentListView(generics.ListAPIView):
 
 
 class PublicMunicipalityListView(generics.ListAPIView):
+    """CAT-02: GET /api/v1/catalogs/municipalities/"""
     serializer_class = MunicipalitySerializer
     permission_classes = [permissions.AllowAny]
     pagination_class = None
 
     def get_queryset(self):
         qs = Municipality.objects.select_related('departamento').all()
-        if dept := (self.request.query_params.get('departamento') or self.request.query_params.get('department')):
+        params = self.request.query_params
+        if dept := (params.get('id_departamento') or params.get('departamento') or params.get('department')):
             qs = qs.filter(departamento_id=dept)
         return qs
 
 
 class PublicCommunityListView(generics.ListAPIView):
+    """CAT-03: GET /api/v1/catalogs/communities/"""
     serializer_class = CommunitySerializer
     permission_classes = [permissions.AllowAny]
     pagination_class = None
 
     def get_queryset(self):
-        qs = Community.objects.filter(activo=True).select_related('municipio')
+        qs = Community.objects.filter(activo=True).select_related('municipio', 'municipio__departamento')
+        params = self.request.query_params
         muni_id = (
             self.kwargs.get('municipality_id')
-            or self.request.query_params.get('municipio')
-            or self.request.query_params.get('municipality')
+            or params.get('id_municipio')
+            or params.get('municipio')
+            or params.get('municipality')
         )
         if muni_id:
             qs = qs.filter(municipio_id=muni_id)
+        if tipo := params.get('tipo'):
+            qs = qs.filter(tipo=tipo.lower())
         return qs
+
+
+class PublicBasinListView(generics.GenericAPIView):
+    """CAT-04: GET /api/v1/catalogs/basins/ — Pendiente de fuente oficial AMP-13; responde lista vacía controlada."""
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        from rest_framework.response import Response
+        return Response([])
+
+
+class AdminBasinViewSet(viewsets.ViewSet):
+    """CRUD /api/v1/admin/basins/ — Pendiente de fuente oficial AMP-13; responde lista vacía controlada."""
+    permission_classes = [IsAdminOrSuperAdmin]
+
+    def list(self, request):
+        from rest_framework.response import Response
+        return Response([])
