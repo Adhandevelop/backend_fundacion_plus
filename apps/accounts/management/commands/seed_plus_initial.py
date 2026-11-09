@@ -54,30 +54,45 @@ class Command(BaseCommand):
 
         # 4. Categorías de noticias (AMP-01)
         news_cats = [
-            ('Institucional', 'institucional', 1),
-            ('Territorio', 'territorio', 2),
-            ('Iniciativas', 'iniciativas', 3),
-            ('Impacto Social', 'impacto-social', 4),
-            ('Convocatorias', 'convocatorias', 5),
-            ('Comunicados Oficiales', 'comunicados-oficiales', 6),
+            ('Institucional', 'institucional', 'Noticias y comunicados institucionales de PLUS'),
+            ('Territorio', 'territorio', 'Trabajo comunitario y presencia territorial'),
+            ('Iniciativas', 'iniciativas', 'Avances de programas e iniciativas sociales'),
+            ('Impacto Social', 'impacto-social', 'Resultados y casos resueltos con las comunidades'),
+            ('Convocatorias', 'convocatorias', 'Invitaciones y jornadas abiertas a la ciudadanía'),
+            ('Comunicados Oficiales', 'comunicados-oficiales', 'Pronunciamientos oficiales de la fundación'),
         ]
-        for nombre, slug, orden in news_cats:
+        for nombre, slug, desc in news_cats:
             NewsCategory.objects.get_or_create(
                 slug=slug,
-                defaults={'nombre': nombre, 'orden': orden, 'activa': True},
+                defaults={'nombre': nombre, 'descripcion': desc, 'activa': True},
             )
 
-        # 5. Documentos legales iniciales (AMP-12)
+        # 5. Documentos legales iniciales (AMP-09 / AMP-12)
         legal_docs = [
-            ('terminos_condiciones', '1.0', 'Términos y condiciones de uso de la plataforma PLUS'),
-            ('tratamiento_datos', '1.0', 'Política de tratamiento de datos personales conforme a Ley 1581 de 2012'),
-            ('uso_evidencias', '1.0', 'Autorización de uso institucional y comunitario de evidencias reportadas'),
+            (
+                'terminos_condiciones',
+                '1.0',
+                'Términos y condiciones de uso de la plataforma PLUS',
+                'Términos y condiciones oficiales para la participación ciudadana y uso responsable de la plataforma PLUS.',
+            ),
+            (
+                'tratamiento_datos',
+                '1.0',
+                'Política de tratamiento de datos personales conforme a Ley 1581 de 2012',
+                'Autorización expresa para el tratamiento de datos personales conforme a la Ley 1581 de 2012.',
+            ),
+            (
+                'boletin',
+                '1.0',
+                'Política de suscripción al boletín institucional PLUS',
+                'Consentimiento informado para el envío de boletines y novedades institucionales de PLUS.',
+            ),
         ]
-        for tipo, version, titulo in legal_docs:
+        for tipo, version, titulo, contenido in legal_docs:
             LegalDocument.objects.get_or_create(
                 tipo=tipo,
                 version=version,
-                defaults={'titulo': titulo, 'vigente': True},
+                defaults={'titulo': titulo, 'contenido': contenido, 'vigente': True},
             )
 
         # 6. Configuración plataforma (sección 08 de base de datos.md)

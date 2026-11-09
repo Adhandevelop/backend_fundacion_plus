@@ -169,10 +169,13 @@ class CasePrivateMessageListCreateView(APIView):
 
 class CasePrivateMessageMarkReadView(APIView):
     """
-    MSG-04: PUT /api/v1/cases/{case_id}/messages/read/
+    MSG-04: PUT / POST /api/v1/cases/{case_id}/messages/read/
     Marca como leídos únicamente los mensajes destinados al usuario autenticado.
     """
     permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, case_id):
+        return self.put(request, case_id)
 
     def put(self, request, case_id):
         case = resolve_case_by_ref(Case.objects.all(), case_id)
@@ -379,14 +382,19 @@ class NewsletterSubscribeView(APIView):
 
 
 class NewsletterConfirmView(APIView):
-    """PUB-10 (AMP-02): POST /api/v1/public/newsletter-subscriptions/confirm/"""
+    """PUB-10 (AMP-02): POST / GET /api/v1/public/newsletter-subscriptions/confirm/"""
     permission_classes = [permissions.AllowAny]
     serializer_class = NewsletterTokenActionSerializer
 
+    def get(self, request):
+        return self.post(request)
+
     def post(self, request):
-        serializer = NewsletterTokenActionSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        raw_token = (serializer.validated_data.get('token') or '').strip()
+        raw_token = (
+            request.data.get('token')
+            or request.query_params.get('token')
+            or ''
+        ).strip()
         if not raw_token:
             return Response(
                 {'code': 'validation_error', 'message': 'Debe proporcionar el token de confirmación.'},

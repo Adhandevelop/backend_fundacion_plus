@@ -72,6 +72,42 @@ paths:
               schema:
                 $ref: '#/components/schemas/Login'
           description: ''
+  /api/v1/admin/audit-events/:
+    get:
+      operationId: v1_admin_audit_events_retrieve
+      description: |-
+        AUD-01: GET /api/v1/admin/audit-events/
+        Proyección unificada de las 5 tablas de auditoría con referencia `event_ref` (`{source}:{uuid}`).
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/admin/audit-events/{event_ref}/:
+    get:
+      operationId: v1_admin_audit_events_retrieve_2
+      description: |-
+        AUD-02: GET /api/v1/admin/audit/events/{event_ref}/
+        Soporta referencia `{source}:{uuid}` o búsqueda directa por UUID.
+      parameters:
+      - in: path
+        name: event_ref
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
   /api/v1/admin/audit-logs/:
     get:
       operationId: v1_admin_audit_logs_list
@@ -233,7 +269,7 @@ paths:
           description: ''
   /api/v1/admin/audit/events/:
     get:
-      operationId: v1_admin_audit_events_retrieve
+      operationId: v1_admin_audit_events_retrieve_3
       description: |-
         AUD-01: GET /api/v1/admin/audit-events/
         Proyección unificada de las 5 tablas de auditoría con referencia `event_ref` (`{source}:{uuid}`).
@@ -248,7 +284,7 @@ paths:
           description: No response body
   /api/v1/admin/audit/events/{event_ref}/:
     get:
-      operationId: v1_admin_audit_events_retrieve_2
+      operationId: v1_admin_audit_events_retrieve_4
       description: |-
         AUD-02: GET /api/v1/admin/audit/events/{event_ref}/
         Soporta referencia `{source}:{uuid}` o búsqueda directa por UUID.
@@ -1548,6 +1584,21 @@ paths:
       - cookieAuth: []
       responses:
         '204':
+          description: No response body
+  /api/v1/admin/dashboard/:
+    get:
+      operationId: v1_admin_dashboard_retrieve
+      description: |-
+        ADM-01: GET /api/v1/admin/dashboard/ (y /api/v1/admin/metrics/dashboard/)
+        Indicadores operativos del Panel Administrativo desde las tablas de `plus`.
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
           description: No response body
   /api/v1/admin/departments/:
     get:
@@ -5333,7 +5384,6 @@ paths:
         name: case_id
         schema:
           type: string
-          format: uuid
         required: true
       tags:
       - v1
@@ -5371,7 +5421,6 @@ paths:
         name: case_id
         schema:
           type: string
-          format: uuid
         required: true
       tags:
       - v1
@@ -5397,7 +5446,6 @@ paths:
         name: case_id
         schema:
           type: string
-          format: uuid
         required: true
       tags:
       - v1
@@ -5424,17 +5472,77 @@ paths:
                 $ref: '#/components/schemas/CaseMessage'
           description: ''
   /api/v1/cases/{case_id}/messages/mark-read/:
-    put:
-      operationId: v1_cases_messages_mark_read_update
+    post:
+      operationId: v1_cases_messages_mark_read_create
       description: |-
-        MSG-04: PUT /api/v1/cases/{case_id}/messages/read/
+        MSG-04: PUT / POST /api/v1/cases/{case_id}/messages/read/
         Marca como leídos únicamente los mensajes destinados al usuario autenticado.
       parameters:
       - in: path
         name: case_id
         schema:
           type: string
-          format: uuid
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+    put:
+      operationId: v1_cases_messages_mark_read_update
+      description: |-
+        MSG-04: PUT / POST /api/v1/cases/{case_id}/messages/read/
+        Marca como leídos únicamente los mensajes destinados al usuario autenticado.
+      parameters:
+      - in: path
+        name: case_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/cases/{case_id}/messages/read/:
+    post:
+      operationId: v1_cases_messages_read_create
+      description: |-
+        MSG-04: PUT / POST /api/v1/cases/{case_id}/messages/read/
+        Marca como leídos únicamente los mensajes destinados al usuario autenticado.
+      parameters:
+      - in: path
+        name: case_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+    put:
+      operationId: v1_cases_messages_read_update
+      description: |-
+        MSG-04: PUT / POST /api/v1/cases/{case_id}/messages/read/
+        Marca como leídos únicamente los mensajes destinados al usuario autenticado.
+      parameters:
+      - in: path
+        name: case_id
+        schema:
+          type: string
         required: true
       tags:
       - v1
@@ -5569,6 +5677,22 @@ paths:
                 items:
                   $ref: '#/components/schemas/Department'
           description: ''
+  /api/v1/catalogs/initiative-categories/:
+    get:
+      operationId: v1_catalogs_initiative_categories_retrieve
+      description: |-
+        CAT-08: GET /api/v1/catalogs/initiative-categories/
+        Retorna valores distintos de `iniciativas.categoria` para programas publicados.
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          description: No response body
   /api/v1/catalogs/municipalities/:
     get:
       operationId: v1_catalogs_municipalities_list
@@ -5588,6 +5712,26 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Municipality'
+          description: ''
+  /api/v1/catalogs/news-categories/:
+    get:
+      operationId: v1_catalogs_news_categories_list
+      description: 'CAT-07 (AMP-01): GET /api/v1/catalogs/news-categories/ (y /api/v1/public/news/categories/)'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NewsCategory'
           description: ''
   /api/v1/citizen/cases/:
     get:
@@ -5661,7 +5805,6 @@ paths:
         name: case_id
         schema:
           type: string
-          format: uuid
         required: true
       tags:
       - v1
@@ -5699,7 +5842,6 @@ paths:
         name: case_id
         schema:
           type: string
-          format: uuid
         required: true
       tags:
       - v1
@@ -5725,7 +5867,6 @@ paths:
         name: case_id
         schema:
           type: string
-          format: uuid
         required: true
       tags:
       - v1
@@ -6721,6 +6862,19 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/me/dashboard/:
+    get:
+      operationId: v1_me_dashboard_retrieve
+      description: 'CIT-01: GET /api/v1/me/dashboard/ (y /api/v1/citizen/dashboard/)'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
   /api/v1/me/followed-cases/:
     get:
       operationId: v1_me_followed_cases_retrieve
@@ -6823,7 +6977,6 @@ paths:
         name: case_id
         schema:
           type: string
-          format: uuid
         required: true
       tags:
       - v1
@@ -6848,7 +7001,6 @@ paths:
         name: case_id
         schema:
           type: string
-          format: uuid
         required: true
       tags:
       - v1
@@ -6884,7 +7036,6 @@ paths:
         name: case_id
         schema:
           type: string
-          format: uuid
         required: true
       tags:
       - v1
@@ -6920,7 +7071,6 @@ paths:
         name: case_id
         schema:
           type: string
-          format: uuid
         required: true
       tags:
       - v1
@@ -7142,9 +7292,21 @@ paths:
                 $ref: '#/components/schemas/Notification'
           description: ''
   /api/v1/me/photo/:
+    post:
+      operationId: v1_me_photo_create
+      description: 'ME-03 y ME-04: PUT / POST / DELETE /api/v1/me/photo/'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
     put:
       operationId: v1_me_photo_update
-      description: 'ME-03 y ME-04: PUT / DELETE /api/v1/me/photo/'
+      description: 'ME-03 y ME-04: PUT / POST / DELETE /api/v1/me/photo/'
       tags:
       - v1
       security:
@@ -7156,7 +7318,7 @@ paths:
           description: No response body
     delete:
       operationId: v1_me_photo_destroy
-      description: 'ME-03 y ME-04: PUT / DELETE /api/v1/me/photo/'
+      description: 'ME-03 y ME-04: PUT / POST / DELETE /api/v1/me/photo/'
       tags:
       - v1
       security:
@@ -7317,7 +7479,6 @@ paths:
         name: case_id
         schema:
           type: string
-          format: uuid
         required: true
       - name: page
         required: false
@@ -7345,6 +7506,28 @@ paths:
               schema:
                 $ref: '#/components/schemas/PaginatedPublicCaseCommentList'
           description: ''
+  /api/v1/public/cases/{case_id}/evidence/:
+    get:
+      operationId: v1_public_cases_evidence_retrieve
+      description: |-
+        MAP-05: GET /api/v1/public/cases/{case_id}/evidence/
+        Solo entrega evidencias expresamente marcadas como `audiencia='publico'` y `estado_revision='aprobada'`.
+      parameters:
+      - in: path
+        name: case_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          description: No response body
   /api/v1/public/cases/{case_id}/evidences/:
     get:
       operationId: v1_public_cases_evidences_retrieve
@@ -7356,7 +7539,6 @@ paths:
         name: case_id
         schema:
           type: string
-          format: uuid
         required: true
       tags:
       - v1
@@ -7379,7 +7561,6 @@ paths:
         name: case_id
         schema:
           type: string
-          format: uuid
         required: true
       tags:
       - v1
@@ -7504,6 +7685,36 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/public/initiative-proposals/:
+    post:
+      operationId: v1_public_initiative_proposals_create
+      description: 'PUB-08: POST /api/v1/public/initiative-proposals/ (y /api/v1/citizen/proposals/)'
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventProposal'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EventProposal'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/EventProposal'
+        required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventProposal'
+          description: ''
   /api/v1/public/initiatives/:
     get:
       operationId: v1_public_initiatives_list
@@ -7668,6 +7879,42 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PaginatedInitiativeActivityList'
+          description: ''
+  /api/v1/public/initiatives/{lookup}/gallery/:
+    get:
+      operationId: v1_public_initiatives_gallery_list_2
+      description: 'PUB-07: GET /api/v1/public/initiatives/{id}/gallery/'
+      parameters:
+      - in: path
+        name: lookup
+        schema:
+          type: string
+        required: true
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedInitiativeMediaList'
           description: ''
   /api/v1/public/initiatives/categories/:
     get:
@@ -7841,10 +8088,131 @@ paths:
                 items:
                   $ref: '#/components/schemas/NewsCategory'
           description: ''
+  /api/v1/public/newsletter-subscriptions/:
+    post:
+      operationId: v1_public_newsletter_subscriptions_create
+      description: 'PUB-09 (AMP-02): POST /api/v1/public/newsletter-subscriptions/'
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewsletterSubscription'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/NewsletterSubscription'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/NewsletterSubscription'
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NewsletterSubscription'
+          description: ''
+  /api/v1/public/newsletter-subscriptions/confirm/:
+    get:
+      operationId: v1_public_newsletter_subscriptions_confirm_retrieve
+      description: 'PUB-10 (AMP-02): POST / GET /api/v1/public/newsletter-subscriptions/confirm/'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NewsletterTokenAction'
+          description: ''
+    post:
+      operationId: v1_public_newsletter_subscriptions_confirm_create
+      description: 'PUB-10 (AMP-02): POST / GET /api/v1/public/newsletter-subscriptions/confirm/'
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewsletterTokenAction'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/NewsletterTokenAction'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/NewsletterTokenAction'
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NewsletterTokenAction'
+          description: ''
+  /api/v1/public/newsletter-subscriptions/unsubscribe/:
+    post:
+      operationId: v1_public_newsletter_subscriptions_unsubscribe_create
+      description: 'PUB-11 (AMP-02): POST /api/v1/public/newsletter-subscriptions/unsubscribe/'
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewsletterTokenAction'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/NewsletterTokenAction'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/NewsletterTokenAction'
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NewsletterTokenAction'
+          description: ''
   /api/v1/public/newsletter/confirm/:
+    get:
+      operationId: v1_public_newsletter_confirm_retrieve
+      description: 'PUB-10 (AMP-02): POST / GET /api/v1/public/newsletter-subscriptions/confirm/'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NewsletterTokenAction'
+          description: ''
     post:
       operationId: v1_public_newsletter_confirm_create
-      description: 'PUB-10 (AMP-02): POST /api/v1/public/newsletter-subscriptions/confirm/'
+      description: 'PUB-10 (AMP-02): POST / GET /api/v1/public/newsletter-subscriptions/confirm/'
       tags:
       - v1
       requestBody:
@@ -7947,6 +8315,22 @@ paths:
                 items:
                   $ref: '#/components/schemas/SiteSetting'
           description: ''
+  /api/v1/public/site/:
+    get:
+      operationId: v1_public_site_retrieve
+      description: |-
+        PUB-01: GET /api/v1/public/site/
+        Proyección pública autorizada de `configuracion_plataforma` y documentos legales vigentes (AMP-09).
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          description: No response body
   /api/v1/public/site-info/:
     get:
       operationId: v1_public_site_info_retrieve

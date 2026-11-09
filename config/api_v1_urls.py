@@ -156,12 +156,13 @@ urlpatterns = [
     # 5. Perfil y Cuenta Propia (/api/v1/me/) — ME-01..05, CIT-01..08, NOT-01..03, MSG-01, MAP-08..10
     # =========================================================================
     path('me/', MeProfileView.as_view(), name='me-profile'),
+    path('me/dashboard/', CitizenDashboardView.as_view(), name='me-dashboard'),
     path('me/photo/', MePhotoView.as_view(), name='me-photo'),
     path('me/change-password/', ChangePasswordView.as_view(), name='me-change-password'),
     path('me/preferences/', MePreferencesView.as_view(), name='me-preferences'),
     path('me/conversations/', MeConversationListView.as_view(), name='me-conversations'),
     path('me/followed-cases/', FollowedCaseView.as_view(), name='me-followed-cases-list'),
-    path('me/followed-cases/<uuid:case_id>/', FollowedCaseView.as_view(), name='me-followed-cases-detail'),
+    path('me/followed-cases/<str:case_id>/', FollowedCaseView.as_view(), name='me-followed-cases-detail'),
     path('me/', include(me_router.urls)),
 
     # =========================================================================
@@ -175,11 +176,14 @@ urlpatterns = [
     path('catalogs/case-categories/', PublicCaseCategoryNamesView.as_view(), name='catalogs-case-categories'),
     path('catalogs/case-statuses/', PublicCaseStatusListView.as_view(), name='catalogs-case-statuses'),
     path('catalogs/case-options/', PublicCaseOptionsView.as_view(), name='catalogs-case-options'),
+    path('catalogs/news-categories/', PublicNewsCategoryListView.as_view(), name='catalogs-news-categories'),
+    path('catalogs/initiative-categories/', PublicInitiativeCategoryListView.as_view(), name='catalogs-initiative-categories'),
 
     # =========================================================================
     # 7 & 8. Portal Público, Noticias, Iniciativas y Mapa (/api/v1/public/) — PUB-01..11, INI-01..03, MAP-01..06
     # =========================================================================
     path('public/home/', PublicHomeSummaryView.as_view(), name='public-home'),
+    path('public/site/', PublicSiteInfoView.as_view(), name='public-site'),
     path('public/site-info/', PublicSiteInfoView.as_view(), name='public-site-info'),
     path('public/territories/departments/', PublicDepartmentListView.as_view(), name='public-departments'),
     path('public/territories/municipalities/', PublicMunicipalityListView.as_view(), name='public-municipalities'),
@@ -196,16 +200,19 @@ urlpatterns = [
     path('public/cases/map/', PublicCaseMapGeoJSONView.as_view(), name='public-cases-map'),
     path('public/cases/geojson/', PublicCaseMapGeoJSONView.as_view(), name='public-cases-geojson'),
     path('public/cases/', PublicCaseListView.as_view(), name='public-cases-list'),
-    path('public/cases/<uuid:case_id>/history/', PublicCaseHistoryView.as_view(), name='public-cases-history'),
-    path('public/cases/<uuid:case_id>/evidences/', PublicCaseEvidenceView.as_view(), name='public-cases-evidences'),
-    path('public/cases/<uuid:case_id>/comments/', PublicCaseCommentListView.as_view(), name='public-cases-comments'),
+    path('public/cases/<str:case_id>/history/', PublicCaseHistoryView.as_view(), name='public-cases-history'),
+    path('public/cases/<str:case_id>/evidence/', PublicCaseEvidenceView.as_view(), name='public-cases-evidence'),
+    path('public/cases/<str:case_id>/evidences/', PublicCaseEvidenceView.as_view(), name='public-cases-evidences'),
+    path('public/cases/<str:case_id>/comments/', PublicCaseCommentListView.as_view(), name='public-cases-comments'),
     path('public/cases/<str:lookup>/', PublicCaseDetailView.as_view(), name='public-cases-detail'),
 
-    # Iniciativas Públicas (PUB-06..10, INI-01..03)
+    # Iniciativas Públicas (PUB-05..08, INI-01..03)
     path('public/initiatives/', PublicInitiativeListView.as_view(), name='public-initiatives-list'),
     path('public/initiatives/categories/', PublicInitiativeCategoryListView.as_view(), name='public-initiatives-categories'),
     path('public/initiatives/proposals/', PublicEventProposalCreateView.as_view(), name='public-initiatives-proposals'),
+    path('public/initiative-proposals/', PublicEventProposalCreateView.as_view(), name='public-initiative-proposals'),
     path('public/initiatives/gallery/', PublicInitiativeGalleryView.as_view(), name='public-initiatives-gallery'),
+    path('public/initiatives/<str:lookup>/gallery/', PublicInitiativeGalleryView.as_view(), name='public-initiative-detail-gallery'),
     path(
         'public/initiatives/<str:lookup>/editions/',
         PublicInitiativeEditionListView.as_view(),
@@ -223,11 +230,14 @@ urlpatterns = [
     ),
     path('public/initiatives/<str:lookup>/', PublicInitiativeDetailView.as_view(), name='public-initiatives-detail'),
 
-    # Noticias Públicas y Boletín (PUB-03..05, PUB-11)
+    # Noticias Públicas y Boletín (PUB-03..04, PUB-09..11)
     path('public/news/categories/', PublicNewsCategoryListView.as_view(), name='public-news-categories-v12'),
     path('public/news-categories/', PublicNewsCategoryListView.as_view(), name='public-news-categories'),
     path('public/news/', PublicNewsListView.as_view(), name='public-news-list'),
     path('public/news/<str:lookup>/', PublicNewsDetailView.as_view(), name='public-news-detail'),
+    path('public/newsletter-subscriptions/', NewsletterSubscribeView.as_view(), name='public-newsletter-subscriptions'),
+    path('public/newsletter-subscriptions/confirm/', NewsletterConfirmView.as_view(), name='public-newsletter-subscriptions-confirm'),
+    path('public/newsletter-subscriptions/unsubscribe/', NewsletterUnsubscribeView.as_view(), name='public-newsletter-subscriptions-unsubscribe'),
     path('public/newsletter/subscribe/', NewsletterSubscribeView.as_view(), name='public-newsletter-subscribe'),
     path('public/newsletter/confirm/', NewsletterConfirmView.as_view(), name='public-newsletter-confirm'),
     path('public/newsletter/unsubscribe/', NewsletterUnsubscribeView.as_view(), name='public-newsletter-unsubscribe'),
@@ -238,21 +248,22 @@ urlpatterns = [
     # =========================================================================
     # 10. Mensajería Privada y Comentarios de Caso (/api/v1/cases/) — MAP-07, MSG-02..04
     # =========================================================================
-    path('cases/<uuid:case_id>/comments/', CitizenCaseCommentCreateView.as_view(), name='case-comments-create'),
-    path('cases/<uuid:case_id>/messages/', CasePrivateMessageListCreateView.as_view(), name='case-messages'),
-    path('cases/<uuid:case_id>/messages/mark-read/', CasePrivateMessageMarkReadView.as_view(), name='case-messages-mark-read'),
+    path('cases/<str:case_id>/comments/', CitizenCaseCommentCreateView.as_view(), name='case-comments-create'),
+    path('cases/<str:case_id>/messages/', CasePrivateMessageListCreateView.as_view(), name='case-messages'),
+    path('cases/<str:case_id>/messages/read/', CasePrivateMessageMarkReadView.as_view(), name='case-messages-read'),
+    path('cases/<str:case_id>/messages/mark-read/', CasePrivateMessageMarkReadView.as_view(), name='case-messages-mark-read'),
 
     # =========================================================================
     # Portal Ciudadano Compatible (/api/v1/citizen/)
     # =========================================================================
     path('citizen/dashboard/', CitizenDashboardView.as_view(), name='citizen-dashboard'),
     path(
-        'citizen/cases/<uuid:case_id>/messages/',
+        'citizen/cases/<str:case_id>/messages/',
         CasePrivateMessageListCreateView.as_view(),
         name='citizen-case-messages',
     ),
     path(
-        'citizen/cases/<uuid:case_id>/comments/',
+        'citizen/cases/<str:case_id>/comments/',
         CitizenCaseCommentCreateView.as_view(),
         name='citizen-case-comments',
     ),
@@ -261,9 +272,12 @@ urlpatterns = [
     # =========================================================================
     # 11-14. Panel Administrativo, Reportes y Auditoría (/api/v1/admin/) — ADM-01..11, REP-01..02, AUD-01..02, USR-01..07
     # =========================================================================
+    path('admin/dashboard/', AdminMetricsDashboardView.as_view(), name='admin-dashboard'),
     path('admin/metrics/dashboard/', AdminMetricsDashboardView.as_view(), name='admin-metrics-dashboard'),
     path('admin/reports/cases/', AdminCaseReportView.as_view(), name='admin-reports-cases'),
     path('admin/reports/cases/export/', AdminCaseReportExportCSVView.as_view(), name='admin-reports-cases-export'),
+    path('admin/audit-events/', AdminAuditEventListView.as_view(), name='admin-audit-events-root'),
+    path('admin/audit-events/<str:event_ref>/', AdminAuditEventDetailView.as_view(), name='admin-audit-event-detail-root'),
     path('admin/audit/events/', AdminAuditEventListView.as_view(), name='admin-audit-events'),
     path('admin/audit/events/<str:event_ref>/', AdminAuditEventDetailView.as_view(), name='admin-audit-event-detail'),
     path(

@@ -44,6 +44,19 @@ if connection.vendor == "postgresql":
         print("==> Aplicando ampliaciones idempotentes /app/db/init/02_ampliaciones_v1_2.sql (AMP-01 a AMP-12)...")
         subprocess.run(base_cmd + ["-f", sql_02], env=env, check=True)
         print("==> Ampliaciones AMP-01 a AMP-12 aplicadas exitosamente.")
+
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass('django_migrations');")
+        if cursor.fetchone()[0]:
+            cursor.execute(
+                """
+                DELETE FROM django_migrations
+                WHERE app IN (
+                    'territories', 'accounts', 'audit', 'cases', 'tracking',
+                    'communications', 'initiatives', 'news', 'notifications'
+                );
+                """
+            )
 PYCODE
 
 echo "==> Aplicando tablas base de Django (contenttypes, auth, admin, authtoken, sessions)..."

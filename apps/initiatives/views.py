@@ -97,8 +97,16 @@ class PublicInitiativeGalleryView(generics.ListAPIView):
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        initiative = resolve_published_initiative(self.kwargs['lookup'])
-        qs = initiative.multimedia.all()
+        from apps.initiatives.models import InitiativeMedia
+
+        lookup = self.kwargs.get('lookup') or self.request.query_params.get('id_iniciativa')
+        if lookup:
+            initiative = resolve_published_initiative(lookup)
+            qs = initiative.multimedia.all()
+        else:
+            qs = InitiativeMedia.objects.filter(
+                iniciativa__estado_publicacion=Initiative.EstadoPublicacion.PUBLICADA
+            )
         if edicion_id := self.request.query_params.get('id_edicion'):
             if edicion_id.lower() in ('null', 'general'):
                 qs = qs.filter(edicion__isnull=True)

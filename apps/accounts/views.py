@@ -258,8 +258,11 @@ class MeProfileView(generics.RetrieveUpdateAPIView):
 
 
 class MePhotoView(APIView):
-    """ME-03 y ME-04: PUT / DELETE /api/v1/me/photo/"""
+    """ME-03 y ME-04: PUT / POST / DELETE /api/v1/me/photo/"""
     permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        return self.put(request)
 
     def put(self, request):
         uploaded = request.FILES.get('photo') or request.FILES.get('foto') or request.FILES.get('file')
