@@ -1,8 +1,8 @@
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from django.utils.text import slugify
+from rest_framework.authtoken.models import Token
 
-from apps.accounts.models import Role
+from apps.accounts.models import Role, User, UserPreference, UserProfile
 from apps.cases.models import CaseCategory, CaseStatus
 from apps.communications.models import LegalDocument, SiteSetting
 from apps.news.models import NewsCategory
@@ -37,13 +37,13 @@ class Command(BaseCommand):
                 defaults={'descripcion': desc, 'orden': orden},
             )
 
-        # 3. Tipos de caso iniciales (AMP-05 naturaleza)
+        # 3. Tipos de caso iniciales (AMP-12 naturaleza: problematica | proyecto_iniciativa | otro)
         tipos_data = [
             ('Infraestructura y Vías', 'infraestructura', 'problematica', 'Afectaciones viales y espacio público'),
-            ('Servicios Públicos y Agua', 'servicios_publicos', 'servicio', 'Acueducto, energía y saneamiento'),
-            ('Educación y Juventud', 'educacion', 'necesidad', 'Situaciones escolares y comunitarias'),
-            ('Salud y Bienestar', 'salud', 'necesidad', 'Atención comunitaria y prevención'),
-            ('Ambiente y Riesgo', 'ambiente', 'riesgo', 'Gestión ambiental y prevención de riesgos'),
+            ('Servicios Públicos y Agua', 'servicios_publicos', 'problematica', 'Acueducto, energía y saneamiento'),
+            ('Educación y Juventud', 'educacion', 'proyecto_iniciativa', 'Situaciones escolares y comunitarias'),
+            ('Salud y Bienestar', 'salud', 'problematica', 'Atención comunitaria y prevención'),
+            ('Ambiente y Riesgo', 'ambiente', 'problematica', 'Gestión ambiental y prevención de riesgos'),
         ]
         for nombre, categoria, naturaleza, desc in tipos_data:
             CaseCategory.objects.update_or_create(
@@ -104,4 +104,51 @@ class Command(BaseCommand):
         for clave, valor in configs:
             SiteSetting.objects.get_or_create(clave=clave, defaults={'valor': valor})
 
-        self.stdout.write(self.style.SUCCESS('Catálogos de base de datos.md y endpoints.md sincronizados correctamente.'))
+        # 7. Usuarios iniciales (1 Administrador y 1 Ciudadano)
+        admin_role = Role.objects.get(nombre='administrador')
+        citizen_role = Role.objects.get(nombre='ciudadano')
+
+        initial_users = [
+            {
+                'correo': 'admin@plus.org',
+                'password': 'AdminPlus2026!',
+                'nombres': 'Administrador',
+                'apellidos': 'PLUS',
+                'telefono': '3000000001',
+                'rol': admin_role,
+            },
+            {
+                'correo': 'ciudadano@plus.org',
+                'password': 'CiudadanoPlus2026!',
+                'nombres': 'María Fernanda',
+                'apellidos': 'López',
+                'telefono': '3000000002',
+                'rol': citizen_role,
+            },
+        ]
+        for udata in initial_users:
+            user = User.objects.filter(correo__iexact=udata['correo']).first()
+            if not user:
+                user = User.objects.create_user(
+                    correo=udata['correo'],
+                    password=udata['password'],
+                    nombres=udata['nombres'],
+                    apellidos=udata['apellidos'],
+                    telefono=udata['telefono'],
+                    rol=udata['rol'],
+                    estado=User.Estado.ACTIVO,
+                )
+            else:
+                user.rol = udata['rol']
+                user.estado = User.Estado.ACTIVO
+                user.set_password(udata['password'])
+                user.save()
+            UserProfile.objects.get_or_create(usuario=user)
+            UserPreference.objects.get_or_create(usuario=user)
+            Token.objects.get_or_create(user=user)
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                'Catálogos y usuarios iniciales (admin@plus.org y ciudadano@plus.org) sincronizados correctamente.'
+            )
+        )
