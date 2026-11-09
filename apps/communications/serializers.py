@@ -69,22 +69,30 @@ class CaseCommentSerializer(serializers.ModelSerializer):
 
 class CommentModerationActionSerializer(serializers.Serializer):
     estado_moderacion = serializers.ChoiceField(
-        choices=['aprobado', 'rechazado', 'oculto', 'approved', 'rejected', 'hidden'],
+        choices=['pendiente', 'aprobado', 'rechazado', 'oculto', 'pending', 'approved', 'rejected', 'hidden'],
         required=False,
-        help_text="Acción de moderación sobre el comentario: 'aprobado', 'rechazado' u 'oculto'.",
+        help_text="Acción de moderación sobre el comentario: 'pendiente', 'aprobado', 'rechazado' u 'oculto'.",
     )
     moderation_status = serializers.CharField(required=False)
     motivo = serializers.CharField(
         required=False,
         allow_blank=True,
         default='',
-        help_text='Motivo de moderación (obligatorio al rechazar u ocultar si la política lo exige; se guarda en auditoria_eventos).',
+        help_text='Nota o motivo interno de moderación (se guarda en auditoria_eventos; no se expone al autor salvo que notificar_motivo=true).',
     )
+    nota_interna = serializers.CharField(required=False, allow_blank=True, default='')
     moderation_reason = serializers.CharField(required=False, allow_blank=True, default='')
+    notificar_motivo = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text='Si es true, incluye el motivo en la notificación enviada al autor del comentario.',
+    )
 
     def validate(self, attrs):
         raw = (attrs.get('estado_moderacion') or attrs.get('moderation_status') or '').strip().lower()
         mapping = {
+            'pending': CaseComment.EstadoModeracion.PENDIENTE,
+            'pendiente': CaseComment.EstadoModeracion.PENDIENTE,
             'approved': CaseComment.EstadoModeracion.APROBADO,
             'aprobado': CaseComment.EstadoModeracion.APROBADO,
             'rejected': CaseComment.EstadoModeracion.RECHAZADO,
@@ -95,7 +103,13 @@ class CommentModerationActionSerializer(serializers.Serializer):
         if raw not in mapping:
             raise serializers.ValidationError({'estado_moderacion': 'Estado de moderación no válido.'})
         attrs['resolved_status'] = mapping[raw]
-        attrs['resolved_motivo'] = (attrs.get('motivo') or attrs.get('moderation_reason') or '').strip()
+        attrs['resolved_motivo'] = (
+            attrs.get('motivo')
+            or attrs.get('nota_interna')
+            or attrs.get('moderation_reason')
+            or ''
+        ).strip()
+        attrs['resolved_notificar_motivo'] = bool(attrs.get('notificar_motivo', False))
         return attrs
 
 

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Plataforma Web PLUS — API REST
-  version: 1.0.0
+  version: 1.2.0
   description: API RESTful para la Corporación Pluralismo Social (PLUS). Incluye gestión
     de casos georreferenciados (PostGIS), iniciativas comunitarias, jornadas, noticias
     institucionales, participación ciudadana y auditoría.
@@ -550,6 +550,178 @@ paths:
       responses:
         '204':
           description: No response body
+  /api/v1/admin/case-comments/:
+    get:
+      operationId: v1_admin_case_comments_list
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedCaseCommentList'
+          description: ''
+    post:
+      operationId: v1_admin_case_comments_create
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseComment'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/CaseComment'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CaseComment'
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseComment'
+          description: ''
+  /api/v1/admin/case-comments/{id}/:
+    get:
+      operationId: v1_admin_case_comments_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this case comment.
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseComment'
+          description: ''
+    delete:
+      operationId: v1_admin_case_comments_destroy
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this case comment.
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/admin/case-comments/{id}/moderate/:
+    post:
+      operationId: v1_admin_case_comments_moderate_create
+      description: Alias compatible con POST /api/v1/admin/comments/{id}/moderate/
+      summary: Alias compatible para moderar un comentario
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this case comment.
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentModerationAction'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/CommentModerationAction'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CommentModerationAction'
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseComment'
+          description: ''
+  /api/v1/admin/case-comments/{id}/moderation/:
+    post:
+      operationId: v1_admin_case_comments_moderation_create
+      description: 'Sección 14: POST /api/v1/admin/comments/{id}/moderation/'
+      summary: Aprobar, rechazar u ocultar un comentario y guardar motivo en auditoría
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this case comment.
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentModerationAction'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/CommentModerationAction'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CommentModerationAction'
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseComment'
+          description: ''
   /api/v1/admin/cases/:
     get:
       operationId: v1_admin_cases_list
@@ -5606,28 +5778,35 @@ paths:
     post:
       operationId: v1_auth_refresh_create
       description: |-
-        Takes a refresh type JSON web token and returns an access type JSON web
-        token if the refresh token is valid.
+        AUTH-03: POST /api/v1/auth/refresh/
+        Renueva el JWT validando que la cuenta siga en estado 'activo' y que la sesión ('sid')
+        no haya sido cerrada mediante `/auth/logout/` ni revocada por cambio de contraseña/suspensión.
+      summary: Renovar token JWT verificando estado de cuenta y sesión activa (AUTH-03)
       tags:
       - v1
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/TokenRefresh'
+              $ref: '#/components/schemas/TokenRefreshRequest'
           application/x-www-form-urlencoded:
             schema:
-              $ref: '#/components/schemas/TokenRefresh'
+              $ref: '#/components/schemas/TokenRefreshRequest'
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/TokenRefresh'
+              $ref: '#/components/schemas/TokenRefreshRequest'
         required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
       responses:
         '200':
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TokenRefresh'
+                $ref: '#/components/schemas/TokenRefreshResponse'
           description: ''
   /api/v1/auth/register/:
     post:
@@ -5763,8 +5942,10 @@ paths:
       operationId: v1_cases_messages_mark_read_create
       description: |-
         MSG-04: PUT / POST /api/v1/cases/{case_id}/messages/read/
-        Marca como leídos únicamente los mensajes destinados al usuario autenticado.
-      summary: Marcar mensajes privados recibidos como leídos (MSG-04)
+        Marca como leídos únicamente los mensajes destinados al usuario autenticado,
+        soportando selección por lista (`message_ids`), corte por mensaje (`up_to_message_id`)
+        o corte temporal (`up_to_timestamp`) para no marcar mensajes recibidos después de abrir la conversación.
+      summary: Marcar mensajes privados recibidos como leídos con corte opcional (MSG-04)
       parameters:
       - in: path
         name: case_id
@@ -5799,8 +5980,10 @@ paths:
       operationId: v1_cases_messages_mark_read_update
       description: |-
         MSG-04: PUT / POST /api/v1/cases/{case_id}/messages/read/
-        Marca como leídos únicamente los mensajes destinados al usuario autenticado.
-      summary: Marcar mensajes privados recibidos como leídos (MSG-04)
+        Marca como leídos únicamente los mensajes destinados al usuario autenticado,
+        soportando selección por lista (`message_ids`), corte por mensaje (`up_to_message_id`)
+        o corte temporal (`up_to_timestamp`) para no marcar mensajes recibidos después de abrir la conversación.
+      summary: Marcar mensajes privados recibidos como leídos con corte opcional (MSG-04)
       parameters:
       - in: path
         name: case_id
@@ -5836,8 +6019,10 @@ paths:
       operationId: v1_cases_messages_read_create
       description: |-
         MSG-04: PUT / POST /api/v1/cases/{case_id}/messages/read/
-        Marca como leídos únicamente los mensajes destinados al usuario autenticado.
-      summary: Marcar mensajes privados recibidos como leídos (MSG-04)
+        Marca como leídos únicamente los mensajes destinados al usuario autenticado,
+        soportando selección por lista (`message_ids`), corte por mensaje (`up_to_message_id`)
+        o corte temporal (`up_to_timestamp`) para no marcar mensajes recibidos después de abrir la conversación.
+      summary: Marcar mensajes privados recibidos como leídos con corte opcional (MSG-04)
       parameters:
       - in: path
         name: case_id
@@ -5872,8 +6057,10 @@ paths:
       operationId: v1_cases_messages_read_update
       description: |-
         MSG-04: PUT / POST /api/v1/cases/{case_id}/messages/read/
-        Marca como leídos únicamente los mensajes destinados al usuario autenticado.
-      summary: Marcar mensajes privados recibidos como leídos (MSG-04)
+        Marca como leídos únicamente los mensajes destinados al usuario autenticado,
+        soportando selección por lista (`message_ids`), corte por mensaje (`up_to_message_id`)
+        o corte temporal (`up_to_timestamp`) para no marcar mensajes recibidos después de abrir la conversación.
+      summary: Marcar mensajes privados recibidos como leídos con corte opcional (MSG-04)
       parameters:
       - in: path
         name: case_id
@@ -8730,6 +8917,41 @@ paths:
               schema:
                 $ref: '#/components/schemas/EventProposal'
           description: ''
+  /api/v1/public/media/{file_path}:
+    get:
+      operationId: v1_public_media_retrieve
+      description: |-
+        Entrega autorizada de archivos multimedia públicos a través de `/api/v1/public/media/<path:file_path>`.
+        Compatible con configuraciones Nginx donde solo `/api/` se reenvía al contenedor backend.
+        - Permite carpetas públicas: `profiles/`, `news/`, `initiatives/`.
+        - Para `cases/evidence/`, verifica en base de datos que la evidencia pertenezca a un caso con
+          `estado_publicacion='aprobado'` y que la evidencia tenga `audiencia='publico'` y `estado_revision='aprobada'`.
+        - Cualquier evidencia privada o en revisión es bloqueada con 403/404.
+      summary: Servir archivo multimedia público verificado (fotos de perfil, portadas
+        y evidencias públicas aprobadas)
+      parameters:
+      - in: path
+        name: file_path
+        schema:
+          type: string
+        description: Ruta relativa del recurso multimedia público (ej. profiles/foto.jpg,
+          news/portada.webp).
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: string
+                format: binary
+          description: ''
   /api/v1/public/news/:
     get:
       operationId: v1_public_news_list
@@ -9823,6 +10045,8 @@ components:
     AuthSessionResponse:
       type: object
       properties:
+        tokens:
+          $ref: '#/components/schemas/TokenBundle'
         access:
           type: string
           description: Token JWT de acceso (Bearer).
@@ -9855,6 +10079,7 @@ components:
       - refresh
       - refresh_expires_in
       - token
+      - tokens
       - user
     CaseAssignResponsible:
       type: object
@@ -10818,11 +11043,13 @@ components:
           allOf:
           - $ref: '#/components/schemas/CommentModerationActionEstadoModeracionEnum'
           description: |-
-            Acción de moderación sobre el comentario: 'aprobado', 'rechazado' u 'oculto'.
+            Acción de moderación sobre el comentario: 'pendiente', 'aprobado', 'rechazado' u 'oculto'.
 
+            * `pendiente` - pendiente
             * `aprobado` - aprobado
             * `rechazado` - rechazado
             * `oculto` - oculto
+            * `pending` - pending
             * `approved` - approved
             * `rejected` - rejected
             * `hidden` - hidden
@@ -10831,24 +11058,36 @@ components:
         motivo:
           type: string
           default: ''
-          description: Motivo de moderación (obligatorio al rechazar u ocultar si
-            la política lo exige; se guarda en auditoria_eventos).
+          description: Nota o motivo interno de moderación (se guarda en auditoria_eventos;
+            no se expone al autor salvo que notificar_motivo=true).
+        nota_interna:
+          type: string
+          default: ''
         moderation_reason:
           type: string
           default: ''
+        notificar_motivo:
+          type: boolean
+          default: false
+          description: Si es true, incluye el motivo en la notificación enviada al
+            autor del comentario.
     CommentModerationActionEstadoModeracionEnum:
       enum:
+      - pendiente
       - aprobado
       - rechazado
       - oculto
+      - pending
       - approved
       - rejected
       - hidden
       type: string
       description: |-
+        * `pendiente` - pendiente
         * `aprobado` - aprobado
         * `rechazado` - rechazado
         * `oculto` - oculto
+        * `pending` - pending
         * `approved` - approved
         * `rejected` - rejected
         * `hidden` - hidden
@@ -11889,7 +12128,10 @@ components:
       properties:
         message:
           type: string
+        detail:
+          type: string
       required:
+      - detail
       - message
     MarkMessagesReadPutRequest:
       type: object
@@ -11899,6 +12141,18 @@ components:
           items:
             type: string
             format: uuid
+          description: Lista opcional de UUIDs de mensajes recibidos a marcar como
+            leídos.
+        up_to_message_id:
+          type: string
+          format: uuid
+          description: UUID del último mensaje visible en pantalla; marca como leídos
+            hasta ese mensaje inclusive.
+        up_to_timestamp:
+          type: string
+          format: date-time
+          description: Fecha/hora ISO de corte; excluye mensajes recibidos con fecha
+            posterior.
     MarkMessagesReadPutResponse:
       type: object
       properties:
@@ -11919,6 +12173,16 @@ components:
             format: uuid
           description: Lista opcional de UUIDs de mensajes recibidos a marcar como
             leídos.
+        up_to_message_id:
+          type: string
+          format: uuid
+          description: UUID del último mensaje visible en pantalla; marca como leídos
+            hasta ese mensaje inclusive.
+        up_to_timestamp:
+          type: string
+          format: date-time
+          description: Fecha/hora ISO de corte; excluye mensajes recibidos con fecha
+            posterior.
     MarkMessagesReadResponse:
       type: object
       properties:
@@ -13112,16 +13376,22 @@ components:
       properties:
         uid:
           type: string
+          description: Identificador base64 del usuario (opcional si token viene en
+            formato <uid>.<token>).
         token:
           type: string
+          description: Token de recuperación o cadena compuesta <uid>.<token>.
         new_password:
+          type: string
+          writeOnly: true
+          minLength: 8
+        new_password_confirm:
           type: string
           writeOnly: true
           minLength: 8
       required:
       - new_password
       - token
-      - uid
     PasswordResetRequest:
       type: object
       properties:
@@ -13136,11 +13406,13 @@ components:
       properties:
         uid:
           type: string
+          description: Identificador base64 del usuario (opcional si token viene en
+            formato <uid>.<token>).
         token:
           type: string
+          description: Token de recuperación o cadena compuesta <uid>.<token>.
       required:
       - token
-      - uid
     PatchedAdminCaseDetail:
       type: object
       properties:
@@ -14544,10 +14816,16 @@ components:
           readOnly: true
         notificar_novedades_casos:
           type: boolean
+        notificar_avance_casos:
+          type: boolean
+          description: Alias de notificar_novedades_casos.
         notificar_mensajes:
           type: boolean
         suscrito_boletin:
           type: boolean
+        recibir_boletin:
+          type: boolean
+          description: Alias de suscrito_boletin.
         fecha_actualizacion:
           type: string
           format: date-time
@@ -15224,16 +15502,51 @@ components:
         * `seguimiento` - Seguimiento
         * `resultado` - Resultado
         * `otro` - Otro
-    TokenRefresh:
+    TokenBundle:
       type: object
       properties:
         access:
           type: string
-          readOnly: true
         refresh:
           type: string
+        token:
+          type: string
+        token_type:
+          type: string
+          default: Bearer
+        expires_in:
+          type: integer
+        refresh_expires_in:
+          type: integer
       required:
       - access
+      - expires_in
+      - refresh
+      - refresh_expires_in
+      - token
+    TokenRefreshRequest:
+      type: object
+      properties:
+        refresh:
+          type: string
+          description: Token JWT refresh vigente.
+      required:
+      - refresh
+    TokenRefreshResponse:
+      type: object
+      properties:
+        access:
+          type: string
+        refresh:
+          type: string
+        token_type:
+          type: string
+          default: Bearer
+        expires_in:
+          type: integer
+      required:
+      - access
+      - expires_in
       - refresh
     UnifiedAuditEventItem:
       type: object
@@ -15403,10 +15716,16 @@ components:
           readOnly: true
         notificar_novedades_casos:
           type: boolean
+        notificar_avance_casos:
+          type: boolean
+          description: Alias de notificar_novedades_casos.
         notificar_mensajes:
           type: boolean
         suscrito_boletin:
           type: boolean
+        recibir_boletin:
+          type: boolean
+          description: Alias de suscrito_boletin.
         fecha_actualizacion:
           type: string
           format: date-time
@@ -15425,6 +15744,10 @@ components:
           type: string
           readOnly: true
           nullable: true
+        foto_url:
+          type: string
+          nullable: true
+          readOnly: true
         id_departamento:
           type: string
           format: uuid
@@ -15454,6 +15777,7 @@ components:
       - comunidad_nombre
       - departamento_nombre
       - fecha_actualizacion
+      - foto_url
       - id_comunidad
       - id_departamento
       - id_municipio

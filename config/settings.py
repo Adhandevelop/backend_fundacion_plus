@@ -155,6 +155,8 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+DATA_UPLOAD_MAX_MEMORY_SIZE = 64 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 16 * 1024 * 1024
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -169,7 +171,7 @@ CORS_ALLOW_CREDENTIALS = True
 # Django REST Framework Configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'core.authentication.RevocableJWTAuthentication',
         'rest_framework.authentication.TokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
@@ -210,6 +212,6 @@ SPECTACULAR_SETTINGS = {
         'Incluye gestión de casos georreferenciados (PostGIS), iniciativas comunitarias, '
         'jornadas, noticias institucionales, participación ciudadana y auditoría.'
     ),
-    'VERSION': '1.0.0',
+    'VERSION': '1.2.0',
     'SERVE_INCLUDE_SCHEMA': False,
 }

@@ -197,7 +197,9 @@ class CasePrivateMessageListCreateView(APIView):
 class CasePrivateMessageMarkReadView(APIView):
     """
     MSG-04: PUT / POST /api/v1/cases/{case_id}/messages/read/
-    Marca como leídos únicamente los mensajes destinados al usuario autenticado.
+    Marca como leídos únicamente los mensajes destinados al usuario autenticado,
+    soportando selección por lista (`message_ids`), corte por mensaje (`up_to_message_id`)
+    o corte temporal (`up_to_timestamp`) para no marcar mensajes recibidos después de abrir la conversación.
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -209,7 +211,15 @@ class CasePrivateMessageMarkReadView(APIView):
                     child=drf_serializers.UUIDField(),
                     required=False,
                     help_text='Lista opcional de UUIDs de mensajes recibidos a marcar como leídos.',
-                )
+                ),
+                'up_to_message_id': drf_serializers.UUIDField(
+                    required=False,
+                    help_text='UUID del último mensaje visible en pantalla; marca como leídos hasta ese mensaje inclusive.',
+                ),
+                'up_to_timestamp': drf_serializers.DateTimeField(
+                    required=False,
+                    help_text='Fecha/hora ISO de corte; excluye mensajes recibidos con fecha posterior.',
+                ),
             },
         ),
         responses={
@@ -221,7 +231,7 @@ class CasePrivateMessageMarkReadView(APIView):
                 },
             )
         },
-        summary='Marcar mensajes privados recibidos como leídos (MSG-04)',
+        summary='Marcar mensajes privados recibidos como leídos con corte opcional (MSG-04)',
     )
     def post(self, request, case_id):
         return self.put(request, case_id)
@@ -233,7 +243,16 @@ class CasePrivateMessageMarkReadView(APIView):
                 'message_ids': drf_serializers.ListField(
                     child=drf_serializers.UUIDField(),
                     required=False,
-                )
+                    help_text='Lista opcional de UUIDs de mensajes recibidos a marcar como leídos.',
+                ),
+                'up_to_message_id': drf_serializers.UUIDField(
+                    required=False,
+                    help_text='UUID del último mensaje visible en pantalla; marca como leídos hasta ese mensaje inclusive.',
+                ),
+                'up_to_timestamp': drf_serializers.DateTimeField(
+                    required=False,
+                    help_text='Fecha/hora ISO de corte; excluye mensajes recibidos con fecha posterior.',
+                ),
             },
         ),
         responses={
@@ -245,14 +264,28 @@ class CasePrivateMessageMarkReadView(APIView):
                 },
             )
         },
-        summary='Marcar mensajes privados recibidos como leídos (MSG-04)',
+        summary='Marcar mensajes privados recibidos como leídos con corte opcional (MSG-04)',
     )
     def put(self, request, case_id):
+        from django.utils.dateparse import parse_datetime
+
         case = resolve_case_by_ref(Case.objects.all(), case_id)
         qs = case.mensajes_privados.filter(destinatario=request.user, fecha_lectura__isnull=True)
         message_ids = request.data.get('message_ids') or request.data.get('ids')
+        up_to_msg_id = request.data.get('up_to_message_id') or request.data.get('hasta_id_mensaje')
+        up_to_ts = request.data.get('up_to_timestamp') or request.data.get('hasta_fecha')
+
         if isinstance(message_ids, list) and message_ids:
             qs = qs.filter(id__in=message_ids)
+        if up_to_msg_id:
+            cutoff_msg = case.mensajes_privados.filter(id=up_to_msg_id).first()
+            if cutoff_msg:
+                qs = qs.filter(fecha_envio__lte=cutoff_msg.fecha_envio)
+        if up_to_ts:
+            parsed_dt = parse_datetime(str(up_to_ts))
+            if parsed_dt:
+                qs = qs.filter(fecha_envio__lte=parsed_dt)
+
         updated = qs.update(fecha_lectura=timezone.now())
         remaining = case.mensajes_privados.filter(destinatario=request.user, fecha_lectura__isnull=True).count()
         return Response({'marked_read': updated, 'unread_remaining': remaining}, status=status.HTTP_200_OK)
@@ -341,7 +374,7 @@ class AdminCaseCommentModerationViewSet(viewsets.ModelViewSet):
         )
 
         msg_text = f'Tu comentario fue marcado como {comment.estado_moderacion}.'
-        if motivo:
+        if motivo and serializer.validated_data.get('resolved_notificar_motivo', False):
             msg_text += f' Motivo: {motivo}'
         NotificationService.notify(
             recipient=comment.usuario,

@@ -60,6 +60,7 @@ class ResponsibleScopeAssignmentSerializer(serializers.ModelSerializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     id_perfil = serializers.UUIDField(source='id', read_only=True)
+    foto_url = serializers.SerializerMethodField()
     id_departamento = serializers.UUIDField(source='departamento_id', read_only=True)
     id_municipio = serializers.UUIDField(source='municipio_id', read_only=True)
     id_comunidad = serializers.UUIDField(source='comunidad_id', read_only=True)
@@ -72,6 +73,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         fields = [
             'id_perfil',
             'ruta_foto',
+            'foto_url',
             'id_departamento',
             'departamento_nombre',
             'id_municipio',
@@ -82,17 +84,39 @@ class UserProfileSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
+    def get_foto_url(self, obj) -> str | None:
+        if not obj.ruta_foto:
+            return None
+        clean = obj.ruta_foto
+        if clean.startswith('/api/v1/public/media/'):
+            return clean
+        if clean.startswith('/media/'):
+            clean = clean[len('/media/'):]
+        return f"/api/v1/public/media/{clean.lstrip('/')}"
+
 
 class UserPreferenceSerializer(serializers.ModelSerializer):
     id_preferencia = serializers.UUIDField(source='id', read_only=True)
+    notificar_avance_casos = serializers.BooleanField(
+        source='notificar_novedades_casos',
+        required=False,
+        help_text='Alias de notificar_novedades_casos.',
+    )
+    recibir_boletin = serializers.BooleanField(
+        source='suscrito_boletin',
+        required=False,
+        help_text='Alias de suscrito_boletin.',
+    )
 
     class Meta:
         model = UserPreference
         fields = [
             'id_preferencia',
             'notificar_novedades_casos',
+            'notificar_avance_casos',
             'notificar_mensajes',
             'suscrito_boletin',
+            'recibir_boletin',
             'fecha_actualizacion',
         ]
         read_only_fields = ['id_preferencia', 'fecha_actualizacion']
@@ -370,18 +394,52 @@ class PasswordResetRequestSerializer(serializers.Serializer):
 
 
 class PasswordResetValidateSerializer(serializers.Serializer):
-    uid = serializers.CharField()
-    token = serializers.CharField()
+    uid = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text='Identificador base64 del usuario (opcional si token viene en formato <uid>.<token>).',
+    )
+    token = serializers.CharField(help_text='Token de recuperación o cadena compuesta <uid>.<token>.')
+
+    def validate(self, attrs):
+        uid = (attrs.get('uid') or '').strip()
+        token = (attrs.get('token') or '').strip()
+        if not uid and '.' in token:
+            uid, token = token.split('.', 1)
+        if not uid or not token:
+            raise serializers.ValidationError({'token': 'Debe proporcionar uid y token (o token compuesto <uid>.<token>).'})
+        attrs['resolved_uid'] = uid
+        attrs['resolved_token'] = token
+        return attrs
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
-    uid = serializers.CharField()
-    token = serializers.CharField()
+    uid = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text='Identificador base64 del usuario (opcional si token viene en formato <uid>.<token>).',
+    )
+    token = serializers.CharField(help_text='Token de recuperación o cadena compuesta <uid>.<token>.')
     new_password = serializers.CharField(write_only=True, min_length=8)
+    new_password_confirm = serializers.CharField(write_only=True, min_length=8, required=False)
 
     def validate_new_password(self, value):
         validate_password(value)
         return value
+
+    def validate(self, attrs):
+        uid = (attrs.get('uid') or '').strip()
+        token = (attrs.get('token') or '').strip()
+        if not uid and '.' in token:
+            uid, token = token.split('.', 1)
+        if not uid or not token:
+            raise serializers.ValidationError({'token': 'Debe proporcionar uid y token (o token compuesto <uid>.<token>).'})
+        confirm = attrs.get('new_password_confirm')
+        if confirm is not None and confirm != attrs.get('new_password'):
+            raise serializers.ValidationError({'new_password_confirm': 'Las contraseñas no coinciden.'})
+        attrs['resolved_uid'] = uid
+        attrs['resolved_token'] = token
+        return attrs
 
 
 class AdminUserCreateUpdateSerializer(serializers.ModelSerializer):

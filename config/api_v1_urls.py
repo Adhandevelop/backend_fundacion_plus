@@ -1,7 +1,6 @@
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.accounts.views import (
     AdminRoleViewSet,
@@ -17,7 +16,9 @@ from apps.accounts.views import (
     PasswordResetRequestView,
     PasswordResetValidateView,
     ResponsibleScopeAssignmentViewSet,
+    RevocableTokenRefreshView,
 )
+from core.views import PublicMediaServeView
 from apps.audit.views import (
     AdminAuditEventDetailView,
     AdminAuditEventListView,
@@ -118,6 +119,7 @@ admin_router.register('case-categories', AdminCaseCategoryViewSet, basename='adm
 admin_router.register('cases', AdminCaseViewSet, basename='admin-cases')
 admin_router.register('evidence', AdminCaseEvidenceViewSet, basename='admin-evidence')
 admin_router.register('comments', AdminCaseCommentModerationViewSet, basename='admin-comments')
+admin_router.register('case-comments', AdminCaseCommentModerationViewSet, basename='admin-case-comments')
 admin_router.register('event-proposals', AdminEventProposalViewSet, basename='admin-event-proposals')
 admin_router.register('proposals', AdminEventProposalViewSet, basename='admin-proposals')
 admin_router.register('initiatives', AdminInitiativeViewSet, basename='admin-initiatives')
@@ -143,7 +145,7 @@ urlpatterns = [
     # =========================================================================
     path('auth/login/', LoginView.as_view(), name='auth-login'),
     path('auth/register/', CitizenRegisterView.as_view(), name='auth-register'),
-    path('auth/refresh/', TokenRefreshView.as_view(), name='auth-refresh'),
+    path('auth/refresh/', RevocableTokenRefreshView.as_view(), name='auth-refresh'),
     path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
     path('auth/password-reset/request/', PasswordResetRequestView.as_view(), name='auth-password-reset-request'),
     path('auth/password-reset/validate/', PasswordResetValidateView.as_view(), name='auth-password-reset-validate'),
@@ -182,6 +184,7 @@ urlpatterns = [
     # =========================================================================
     # 7 & 8. Portal Público, Noticias, Iniciativas y Mapa (/api/v1/public/) — PUB-01..11, INI-01..03, MAP-01..06
     # =========================================================================
+    path('public/media/<path:file_path>', PublicMediaServeView.as_view(), name='public-media-serve'),
     path('public/home/', PublicHomeSummaryView.as_view(), name='public-home'),
     path('public/site/', PublicSiteInfoView.as_view(), name='public-site'),
     path('public/site-info/', PublicSiteInfoView.as_view(), name='public-site-info'),

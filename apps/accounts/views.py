@@ -48,11 +48,12 @@ from core.validators import validate_file_safety
 
 
 def get_tokens_for_user(user: User) -> dict:
+    token_obj, _ = Token.objects.get_or_create(user=user)
     refresh = RefreshToken.for_user(user)
     refresh['correo'] = user.correo
     refresh['roles'] = user.get_role_codes()
     refresh['primary_role'] = user.get_primary_role()
-    token_obj, _ = Token.objects.get_or_create(user=user)
+    refresh['sid'] = token_obj.key[:16]
     jwt_cfg = getattr(settings, 'SIMPLE_JWT', {})
     access_lifetime = jwt_cfg.get('ACCESS_TOKEN_LIFETIME')
     refresh_lifetime = jwt_cfg.get('REFRESH_TOKEN_LIFETIME')
@@ -66,6 +67,18 @@ def get_tokens_for_user(user: User) -> dict:
     }
 
 
+TokenBundleSerializer = inline_serializer(
+    name='TokenBundle',
+    fields={
+        'access': drf_serializers.CharField(),
+        'refresh': drf_serializers.CharField(),
+        'token': drf_serializers.CharField(),
+        'token_type': drf_serializers.CharField(default='Bearer'),
+        'expires_in': drf_serializers.IntegerField(),
+        'refresh_expires_in': drf_serializers.IntegerField(),
+    },
+)
+
 AuthSessionResponseSerializer = inline_serializer(
     name='AuthSessionResponse',
     fields={
@@ -75,11 +88,78 @@ AuthSessionResponseSerializer = inline_serializer(
         'token_type': drf_serializers.CharField(default='Bearer'),
         'expires_in': drf_serializers.IntegerField(help_text='Segundos de vigencia del access token.'),
         'refresh_expires_in': drf_serializers.IntegerField(help_text='Segundos de vigencia del refresh token.'),
+        'tokens': TokenBundleSerializer,
         'primary_role': drf_serializers.CharField(required=False),
         'roles': drf_serializers.ListField(child=drf_serializers.CharField(), required=False),
         'user': UserMeSerializer(),
     },
 )
+
+
+class RevocableTokenRefreshView(APIView):
+    """
+    AUTH-03: POST /api/v1/auth/refresh/
+    Renueva el JWT validando que la cuenta siga en estado 'activo' y que la sesión ('sid')
+    no haya sido cerrada mediante `/auth/logout/` ni revocada por cambio de contraseña/suspensión.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        request=inline_serializer(
+            name='TokenRefreshRequest',
+            fields={'refresh': drf_serializers.CharField(help_text='Token JWT refresh vigente.')},
+        ),
+        responses={
+            200: inline_serializer(
+                name='TokenRefreshResponse',
+                fields={
+                    'access': drf_serializers.CharField(),
+                    'refresh': drf_serializers.CharField(),
+                    'token_type': drf_serializers.CharField(default='Bearer'),
+                    'expires_in': drf_serializers.IntegerField(),
+                },
+            )
+        },
+        summary='Renovar token JWT verificando estado de cuenta y sesión activa (AUTH-03)',
+    )
+    def post(self, request):
+        raw_refresh = request.data.get('refresh')
+        if not raw_refresh:
+            return Response(
+                {'code': 'validation_error', 'message': 'El campo refresh es obligatorio.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            refresh = RefreshToken(raw_refresh)
+            user_id = refresh.get('user_id')
+            user = User.objects.filter(pk=user_id, estado=User.Estado.ACTIVO).first()
+            if not user or not user.is_active:
+                return Response(
+                    {'code': 'user_inactive', 'message': 'La cuenta se encuentra suspendida o inactiva.'},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+            sid = refresh.get('sid')
+            active_key = Token.objects.filter(user=user).values_list('key', flat=True).first()
+            if sid and (not active_key or active_key[:16] != sid):
+                return Response(
+                    {'code': 'token_revoked', 'message': 'La sesión fue cerrada o revocada en el servidor.'},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+            tokens = get_tokens_for_user(user)
+            return Response(
+                {
+                    'access': tokens['access'],
+                    'refresh': tokens['refresh'],
+                    'token_type': 'Bearer',
+                    'expires_in': tokens['expires_in'],
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception:
+            return Response(
+                {'code': 'token_not_valid', 'message': 'El token refresh es inválido o ha expirado.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
 
 class CitizenRegisterView(APIView):
@@ -111,6 +191,7 @@ class CitizenRegisterView(APIView):
         return Response(
             {
                 **tokens,
+                'tokens': tokens,
                 'primary_role': user.get_primary_role(),
                 'roles': user.get_role_codes(),
                 'user': UserMeSerializer(user).data,
@@ -166,6 +247,7 @@ class LoginView(APIView):
         return Response(
             {
                 **tokens,
+                'tokens': tokens,
                 'usuario': display_username,
                 'correo': user.correo,
                 'rol': legacy_role,
@@ -194,7 +276,10 @@ class LogoutView(APIView):
         responses={
             200: inline_serializer(
                 name='LogoutResponse',
-                fields={'message': drf_serializers.CharField()},
+                fields={
+                    'message': drf_serializers.CharField(),
+                    'detail': drf_serializers.CharField(),
+                },
             )
         },
         summary='Cierre de sesión e invalidación de token en servidor (AUTH-04)',
@@ -208,7 +293,10 @@ class LogoutView(APIView):
             resultado='exitoso',
             request=request,
         )
-        return Response({'message': 'Sesión cerrada exitosamente.'}, status=status.HTTP_200_OK)
+        return Response(
+            {'message': 'Sesión cerrada exitosamente.', 'detail': 'Sesión cerrada exitosamente.'},
+            status=status.HTTP_200_OK,
+        )
 
 
 class PasswordResetRequestView(APIView):
@@ -247,14 +335,14 @@ class PasswordResetValidateView(APIView):
         serializer = PasswordResetValidateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            uid = force_str(urlsafe_base64_decode(serializer.validated_data['uid']))
+            uid = force_str(urlsafe_base64_decode(serializer.validated_data['resolved_uid']))
             user = User.objects.get(pk=uid, estado=User.Estado.ACTIVO)
         except Exception:
             return Response(
                 {'code': 'invalid_token', 'message': 'El enlace de recuperación es inválido o ha expirado.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if not default_token_generator.check_token(user, serializer.validated_data['token']):
+        if not default_token_generator.check_token(user, serializer.validated_data['resolved_token']):
             return Response(
                 {'code': 'invalid_token', 'message': 'El enlace de recuperación es inválido o ha expirado.'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -271,14 +359,14 @@ class PasswordResetConfirmView(APIView):
         serializer = PasswordResetConfirmSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            uid = force_str(urlsafe_base64_decode(serializer.validated_data['uid']))
+            uid = force_str(urlsafe_base64_decode(serializer.validated_data['resolved_uid']))
             user = User.objects.get(pk=uid, estado=User.Estado.ACTIVO)
         except Exception:
             return Response(
                 {'code': 'invalid_token', 'message': 'El enlace de recuperación es inválido o ha expirado.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if not default_token_generator.check_token(user, serializer.validated_data['token']):
+        if not default_token_generator.check_token(user, serializer.validated_data['resolved_token']):
             return Response(
                 {'code': 'invalid_token', 'message': 'El enlace de recuperación es inválido o ha expirado.'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -363,7 +451,7 @@ class MePhotoView(APIView):
             )
         saved_path = default_storage.save(f'profiles/{request.user.id}/avatar{ext}', uploaded)
         profile, _ = UserProfile.objects.get_or_create(usuario=request.user)
-        profile.ruta_foto = default_storage.url(saved_path)
+        profile.ruta_foto = f'/api/v1/public/media/{saved_path}'
         profile.save()
         return Response(UserProfileSerializer(profile).data, status=status.HTTP_200_OK)
 
