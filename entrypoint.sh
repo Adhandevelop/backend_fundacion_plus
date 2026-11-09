@@ -7,6 +7,8 @@ import os
 import subprocess
 import django
 from django.db import connection
+from django.db.migrations.loader import MigrationLoader
+from django.db.migrations.recorder import MigrationRecorder
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
@@ -45,29 +47,31 @@ if connection.vendor == "postgresql":
         subprocess.run(base_cmd + ["-f", sql_02], env=env, check=True)
         print("==> Ampliaciones AMP-01 a AMP-12 aplicadas exitosamente.")
 
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT to_regclass('django_migrations');")
-        if cursor.fetchone()[0]:
-            cursor.execute(
-                """
-                DELETE FROM django_migrations
-                WHERE app IN (
-                    'territories', 'accounts', 'audit', 'cases', 'tracking',
-                    'communications', 'initiatives', 'news', 'notifications'
-                );
-                """
-            )
+    # Sincronizar en django_migrations las migraciones de las apps de dominio PLUS
+    # cuyas tablas son gestionadas por 01_schema_plus.sql y 02_ampliaciones_v1_2.sql
+    recorder = MigrationRecorder(connection)
+    recorder.ensure_schema()
+    applied = recorder.applied_migrations()
+    loader = MigrationLoader(connection, ignore_no_migrations=True)
+    domain_apps = {
+        "territories",
+        "accounts",
+        "audit",
+        "cases",
+        "tracking",
+        "communications",
+        "initiatives",
+        "news",
+        "notifications",
+    }
+    for (app_label, mig_name) in sorted(loader.disk_migrations.keys()):
+        if app_label in domain_apps and (app_label, mig_name) not in applied:
+            recorder.record_applied(app_label, mig_name)
+            print(f"==> Migración SQL sincronizada en django_migrations: {app_label}.{mig_name}")
 PYCODE
 
-echo "==> Aplicando tablas base de Django (contenttypes, auth, admin, authtoken, sessions)..."
-python manage.py migrate contenttypes --noinput
-python manage.py migrate auth --noinput
-python manage.py migrate admin --noinput
-python manage.py migrate authtoken --noinput
-python manage.py migrate sessions --noinput
-
-echo "==> Sincronizando historial de migraciones de las apps de dominio PLUS (--fake)..."
-python manage.py migrate --fake --noinput
+echo "==> Aplicando migraciones de infraestructura de Django..."
+python manage.py migrate --noinput
 
 echo "==> Inicializando catálogos y roles base de PLUS..."
 python manage.py seed_plus_initial
