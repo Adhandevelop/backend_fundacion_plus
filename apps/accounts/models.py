@@ -301,6 +301,12 @@ class User(AbstractBaseUser):
         return self.is_superadmin
 
     @property
+    def can_manage_forms(self) -> bool:
+        if not self.is_authenticated or not self.is_active:
+            return False
+        return self.get_primary_role() == Role.Nombre.ADMINISTRADOR
+
+    @property
     def is_superuser(self) -> bool:
         return self.is_superadmin
 
@@ -336,6 +342,7 @@ class User(AbstractBaseUser):
         role_name = normalize_role_name(self.get_primary_role())
         perms = dict(ROLE_PERMISSIONS_MAP.get(role_name, ROLE_PERMISSIONS_MAP[Role.Nombre.CIUDADANO]))
         perms['can_manage_homepage'] = self.can_manage_homepage
+        perms['can_manage_forms'] = self.can_manage_forms
         return perms
 
     def save(self, *args, **kwargs):

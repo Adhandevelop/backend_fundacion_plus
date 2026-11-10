@@ -1074,3 +1074,102 @@ Todos los recursos siguientes soportan `GET`, `POST`, `GET /{id}/`, `PUT /{id}/`
 | **Noticias Institucionales** | `/api/v1/admin/news/` | `AdminNewsArticleSerializer` (`id_noticia` UUID, `categoria` UUID, `slug`, `titulo`, `subtitulo`, `extracto`, `contenido`, `estado`: `borrador`/`publicada`/`archivada`, `destacada`). |
 | **Multimedia de Noticias** | `/api/v1/admin/news-media/` | `NewsMediaSerializer` (`id_multimedia` UUID, `noticia` UUID, `tipo`: `imagen`/`documento`, `ruta_archivo`, `es_portada`, `orden`). |
 | **Configuración Plataforma** | `/api/v1/admin/settings/` | `SiteSettingSerializer` (`id_configuracion` UUID, `clave`, `valor` JSONB, `fecha_actualizacion`). |
+
+---
+
+## 12. Gestión Exclusiva de Fotografía de Inicio (Home Hero) por Superadministrador
+
+La portada del sitio institucional de PLUS se administra exclusivamente desde una cuenta con rol `administrador` y capacidad `can_manage_homepage: true` (registrada en `plus.configuracion_plataforma` bajo la clave protegida `SUPERADMIN_EMAILS`).
+
+### 12.1. Endpoints de Hero
+- **Consultar imagen actual:** `GET /api/v1/admin/site/home-hero/`
+  - **Permisos:** `IsSuperAdmin` (403 para administradores estándar, moderadores y ciudadanos; 401 para anónimos).
+  - **Respuesta 200 OK:**
+    ```json
+    {
+      "clave": "INSTITUTION_HERO",
+      "image_url": "http://localhost:8000/media/site/hero/home_hero_1731191234_a1b2c3.jpg?v=1731191234",
+      "url": "http://localhost:8000/media/site/hero/home_hero_1731191234_a1b2c3.jpg?v=1731191234",
+      "relative_url": "/media/site/hero/home_hero_1731191234_a1b2c3.jpg?v=1731191234",
+      "api_media_url": "http://localhost:8000/api/v1/public/media/site/hero/home_hero_1731191234_a1b2c3.jpg?v=1731191234",
+      "alt_text": "Comunidad y equipo de la Fundación PLUS en territorio",
+      "version": "1731191234",
+      "updated_at": "2026-11-10T02:40:00Z",
+      "corporation_name": "Corporación Pluralismo Social",
+      "acronym": "PLUS"
+    }
+    ```
+- **Reemplazar imagen / texto alternativo:** `PUT /api/v1/admin/site/home-hero/` *(Alias: `POST`, `/api/v1/admin/home-hero/`)*
+  - **Content-Type:** `multipart/form-data`
+  - **Campos:** `image` (archivo binario JPG, PNG o WEBP, máx. 5 MB con comprobación de magic bytes) y `alt_text` (texto descriptivo).
+  - **Versionado:** La URL devuelta incluye parámetro `?v=<timestamp>` para invalidación automática de caché de navegadores y proxies.
+  - **Auditoría:** Registra evento inmutable en `plus.auditoria_eventos`.
+  - **Consulta pública:** Se refleja inmediatamente en `GET /api/v1/public/site/` (dentro de `configuracion.INSTITUTION_HERO`) y `GET /api/v1/public/home/` (dentro de `institution`).
+
+---
+
+## 13. Módulo de Formularios Dinámicos (`apps.dynamic_forms`)
+
+Módulo desacoplado para creación de formularios, versionado inmutable, preguntas tipadas, registro automático de ciudadanos y portal de consulta ciudadana.
+
+### 13.1. Endpoints Públicos (Ciudadanos y Visitantes)
+- **Consultar formulario vigente:** `GET /api/v1/public/forms/{slug}/`
+  - Entrega metadatos, versión activa congelada, lista de preguntas con opciones y la política de tratamiento de datos vigente.
+- **Enviar respuestas de formulario:** `POST /api/v1/public/forms/{slug}/submit/`
+  - **Cabecera obligatoria:** `Idempotency-Key: <UUID>`
+  - **Cuerpo JSON:**
+    ```json
+    {
+      "datos_identificacion": {
+        "nombres": "Carolina",
+        "apellidos": "Mendoza",
+        "correo": "carolina.mendoza@gmail.com",
+        "telefono": "3109876543",
+        "tipo_documento": "CC",
+        "numero_documento": "1121890123"
+      },
+      "acepta_politica_datos": true,
+      "id_documento_legal": "c3e98710-86b2-4d51-9128-40eafece5071",
+      "respuestas": [
+        {"id_pregunta": "7bf3b0f5-46aa-4d04-8c80-e889a77ec651", "valor_seleccionado": "porfia"},
+        {"id_pregunta": "18cf311a-1e42-45e0-94b8-f027376c9ad1", "valor_texto": "Baja presión de agua..."}
+      ]
+    }
+    ```
+  - **Respuesta 201 Created (Neutral anti-enumeración):**
+    ```json
+    {
+      "id_envio": "82dc7667-0c15-4fa7-8db1-54b3874b335a",
+      "estado": "recibido",
+      "mensaje": "Tu formulario fue recibido correctamente. Si se requiere confirmar o activar el acceso, recibirás instrucciones en el correo indicado."
+    }
+    ```
+- **Activar cuenta y fijar contraseña:** `POST /api/v1/public/forms/activation/verify/`
+  - **Cuerpo:** `{"token": "<token_uniuso_64_chars>", "nueva_contrasena": "ClaveSegura2026*"}`
+  - **Respuesta 200 OK:** `{"mensaje": "Cuenta activada exitosamente.", "estado": "activada", "login_required": true}`
+  - El usuario procede a iniciar sesión por el endpoint estándar `POST /api/v1/auth/login/`.
+- **Reenviar enlace de activación:** `POST /api/v1/public/forms/activation/resend/`
+  - **Cuerpo:** `{"correo": "carolina.mendoza@gmail.com"}`
+  - **Respuesta 200 OK (Neutral):** `{"mensaje": "Si el correo tiene una solicitud pendiente de activación o confirmación, se ha enviado un nuevo enlace."}`
+
+### 13.2. Endpoints Ciudadanos (“Mis Formularios”)
+- **Listar mis envíos:** `GET /api/v1/me/forms/submissions/`
+  - **Permisos:** `IsCitizenOnly` (403 para administradores y moderadores).
+- **Detalle de mi envío:** `GET /api/v1/me/forms/submissions/{id}/`
+  - Devuelve las preguntas, enunciados congelados y valores respondidos históricamente.
+
+### 13.3. Endpoints Administrativos (`/api/v1/admin/forms/`)
+Requieren autenticación con rol `administrador` y capacidad `can_manage_forms: true`:
+- `GET /api/v1/admin/forms/`: Listado paginado con búsqueda (`?search=`), filtros (`?estado=`) y métricas de envíos y versiones.
+- `POST /api/v1/admin/forms/`: Crear borrador de formulario con preguntas y opciones.
+- `GET /api/v1/admin/forms/{id}/`: Consulta completa de borrador y versiones históricas.
+- `PUT /api/v1/admin/forms/{id}/`: Actualización de borrador con control de concurrencia optimista (`revision_esperada`).
+- `POST /api/v1/admin/forms/{id}/publish/`: Publica el borrador como nueva versión congelada e inmutable (`numero_version_publicada + 1`).
+- `POST /api/v1/admin/forms/{id}/close/`: Cierra el formulario para no admitir nuevos envíos públicos.
+- `POST /api/v1/admin/forms/{id}/reopen/`: Reabre un formulario cerrado.
+- `POST /api/v1/admin/forms/{id}/archive/`: Archiva el formulario (conservación histórica).
+- `POST /api/v1/admin/forms/{id}/duplicate/`: Duplica la estructura completa en un nuevo borrador.
+- `POST /api/v1/admin/forms/{id}/versions/{version}/create-draft/`: Crea un borrador de edición a partir de una versión histórica.
+- `GET /api/v1/admin/forms/{id}/submissions/`: Listado paginado de respuestas con datos de contacto enmascarados.
+- `GET /api/v1/admin/forms/{id}/submissions/{submission_id}/`: Consulta detallada de una respuesta individual con datos completos y auditoría de acceso.
+- `GET /api/v1/admin/forms/{id}/submissions-export/?version=1`: Descarga streaming en CSV con codificación UTF-8 con BOM y protección contra inyección CSV.

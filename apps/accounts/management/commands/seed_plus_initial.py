@@ -98,9 +98,23 @@ class Command(BaseCommand):
 
         # 6. Configuración plataforma (sección 08 de base de datos.md)
         configs = [
-            ('institucion.nombre', 'Corporacion Pluralismo Social'),
+            ('institucion.nombre', 'Corporación Pluralismo Social'),
             ('mapa.srid', 4326),
             ('iniciativas.max_destacadas', 4),
+            ('SUPERADMIN_EMAILS', ['admin@plus.org', 'superadmin@plus.org']),
+            (
+                'INSTITUTION_HERO',
+                {
+                    'image_url': '/media/site/hero/home_hero_default.jpg',
+                    'url': '/media/site/hero/home_hero_default.jpg',
+                    'relative_url': '/media/site/hero/home_hero_default.jpg',
+                    'api_media_url': '/api/v1/public/media/site/hero/home_hero_default.jpg',
+                    'alt_text': 'Comunidad y equipo de la Fundación PLUS en territorio',
+                    'version': '1',
+                    'corporation_name': 'Corporación Pluralismo Social',
+                    'acronym': 'PLUS',
+                },
+            ),
         ]
         for clave, valor in configs:
             SiteSetting.objects.get_or_create(clave=clave, defaults={'valor': valor})
@@ -151,8 +165,102 @@ class Command(BaseCommand):
             UserPreference.objects.get_or_create(usuario=user)
             Token.objects.get_or_create(user=user)
 
+        # 9. Formulario dinámico de prueba publicado (censo-comunitario-meta)
+        try:
+            from apps.dynamic_forms.models import (
+                Formulario,
+                FormularioOpcion,
+                FormularioPregunta,
+                FormularioVersion,
+            )
+            admin_user = User.objects.filter(correo='admin@plus.org').first()
+            demo_slug = 'censo-comunitario-meta'
+            demo_form, created = Formulario.objects.get_or_create(
+                slug=demo_slug,
+                defaults={
+                    'titulo': 'Censo de Necesidades Comunitarias del Meta 2026',
+                    'descripcion': 'Consulta participativa sobre prioridades de servicios públicos e infraestructura en comunidades del Meta.',
+                    'estado': Formulario.Estado.PUBLICADO,
+                    'requiere_documento': True,
+                    'permite_multiples_envios': False,
+                    'numero_version_publicada': 1,
+                    'revision_edicion': 1,
+                    'creado_por': admin_user,
+                },
+            )
+            if created or not demo_form.versiones.exists():
+                version, _ = FormularioVersion.objects.get_or_create(
+                    formulario=demo_form,
+                    numero_version=1,
+                    defaults={
+                        'es_vigente': True,
+                        'titulo_congelado': demo_form.titulo,
+                        'descripcion_congelada': demo_form.descripcion,
+                        'requiere_documento': True,
+                        'permite_multiples_envios': False,
+                        'publicado_por': admin_user,
+                    },
+                )
+                p1, _ = FormularioPregunta.objects.get_or_create(
+                    version=version,
+                    codigo='barrio_sector',
+                    defaults={
+                        'enunciado': '¿En qué barrio, vereda o sector reside actualmente?',
+                        'tipo_campo': FormularioPregunta.TipoCampo.TEXTO_CORTO,
+                        'es_obligatorio': True,
+                        'orden': 1,
+                        'configuracion_validacion': {'min_length': 3, 'max_length': 150},
+                    },
+                )
+                p2, _ = FormularioPregunta.objects.get_or_create(
+                    version=version,
+                    codigo='servicios_afectados',
+                    defaults={
+                        'enunciado': '¿Qué servicios presentan mayores fallas o intermitencias?',
+                        'tipo_campo': FormularioPregunta.TipoCampo.SELECCION_MULTIPLE,
+                        'es_obligatorio': True,
+                        'orden': 2,
+                        'configuracion_validacion': {'min_items': 1, 'max_items': 4},
+                    },
+                )
+                for o_val, o_lbl, o_ord in [
+                    ('acueducto', 'Agua potable y acueducto', 1),
+                    ('alcantarillado', 'Alcantarillado y aguas residuales', 2),
+                    ('energia', 'Energía eléctrica', 3),
+                    ('vias', 'Vías y transporte público', 4),
+                ]:
+                    FormularioOpcion.objects.get_or_create(
+                        pregunta=p2,
+                        valor=o_val,
+                        defaults={'etiqueta': o_lbl, 'orden': o_ord},
+                    )
+
+                p3, _ = FormularioPregunta.objects.get_or_create(
+                    version=version,
+                    codigo='descripcion_necesidad',
+                    defaults={
+                        'enunciado': 'Describa brevemente la principal problemática o necesidad:',
+                        'tipo_campo': FormularioPregunta.TipoCampo.TEXTO_LARGO,
+                        'es_obligatorio': True,
+                        'orden': 3,
+                        'configuracion_validacion': {'min_length': 10, 'max_length': 2000},
+                    },
+                )
+                p4, _ = FormularioPregunta.objects.get_or_create(
+                    version=version,
+                    codigo='desea_participar',
+                    defaults={
+                        'enunciado': '¿Desea participar en las mesas de trabajo y veeduría social?',
+                        'tipo_campo': FormularioPregunta.TipoCampo.BOOLEANO,
+                        'es_obligatorio': False,
+                        'orden': 4,
+                    },
+                )
+        except Exception as e:
+            self.stdout.write(self.style.WARNING(f'Aviso al inicializar formulario de demostración: {e}'))
+
         self.stdout.write(
             self.style.SUCCESS(
-                'Catálogos y usuarios iniciales (admin@plus.org y ciudadano@plus.org) sincronizados correctamente.'
+                'Catálogos, usuarios iniciales (admin@plus.org y ciudadano@plus.org) y formulario de prueba sincronizados correctamente.'
             )
         )

@@ -2400,6 +2400,504 @@ paths:
       responses:
         '204':
           description: No response body
+  /api/v1/admin/forms/:
+    get:
+      operationId: v1_admin_forms_list
+      description: CRUD y ciclo de vida de formularios dinámicos para administradores
+        (can_manage_forms).
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAdminFormularioListList'
+          description: ''
+    post:
+      operationId: v1_admin_forms_create
+      description: CRUD y ciclo de vida de formularios dinámicos para administradores
+        (can_manage_forms).
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioCreateUpdate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioCreateUpdate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioCreateUpdate'
+        required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFormularioCreateUpdate'
+          description: ''
+  /api/v1/admin/forms/{id}/:
+    get:
+      operationId: v1_admin_forms_retrieve
+      description: CRUD y ciclo de vida de formularios dinámicos para administradores
+        (can_manage_forms).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this formulario.
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFormularioDetail'
+          description: ''
+    put:
+      operationId: v1_admin_forms_update
+      description: CRUD y ciclo de vida de formularios dinámicos para administradores
+        (can_manage_forms).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this formulario.
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioCreateUpdate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioCreateUpdate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioCreateUpdate'
+        required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFormularioCreateUpdate'
+          description: ''
+    patch:
+      operationId: v1_admin_forms_partial_update
+      description: CRUD y ciclo de vida de formularios dinámicos para administradores
+        (can_manage_forms).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this formulario.
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedAdminFormularioCreateUpdate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedAdminFormularioCreateUpdate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedAdminFormularioCreateUpdate'
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFormularioCreateUpdate'
+          description: ''
+    delete:
+      operationId: v1_admin_forms_destroy
+      description: CRUD y ciclo de vida de formularios dinámicos para administradores
+        (can_manage_forms).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this formulario.
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/admin/forms/{id}/archive/:
+    post:
+      operationId: v1_admin_forms_archive_create
+      description: CRUD y ciclo de vida de formularios dinámicos para administradores
+        (can_manage_forms).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this formulario.
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+        required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFormularioDetail'
+          description: ''
+  /api/v1/admin/forms/{id}/close/:
+    post:
+      operationId: v1_admin_forms_close_create
+      description: CRUD y ciclo de vida de formularios dinámicos para administradores
+        (can_manage_forms).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this formulario.
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+        required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFormularioDetail'
+          description: ''
+  /api/v1/admin/forms/{id}/duplicate/:
+    post:
+      operationId: v1_admin_forms_duplicate_create
+      description: CRUD y ciclo de vida de formularios dinámicos para administradores
+        (can_manage_forms).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this formulario.
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+        required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFormularioDetail'
+          description: ''
+  /api/v1/admin/forms/{id}/publish/:
+    post:
+      operationId: v1_admin_forms_publish_create
+      description: CRUD y ciclo de vida de formularios dinámicos para administradores
+        (can_manage_forms).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this formulario.
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+        required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFormularioDetail'
+          description: ''
+  /api/v1/admin/forms/{id}/reopen/:
+    post:
+      operationId: v1_admin_forms_reopen_create
+      description: CRUD y ciclo de vida de formularios dinámicos para administradores
+        (can_manage_forms).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this formulario.
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+        required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFormularioDetail'
+          description: ''
+  /api/v1/admin/forms/{id}/submissions/:
+    get:
+      operationId: v1_admin_forms_submissions_retrieve
+      description: CRUD y ciclo de vida de formularios dinámicos para administradores
+        (can_manage_forms).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this formulario.
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFormularioDetail'
+          description: ''
+  /api/v1/admin/forms/{id}/submissions-export/:
+    get:
+      operationId: v1_admin_forms_submissions_export_retrieve
+      description: CRUD y ciclo de vida de formularios dinámicos para administradores
+        (can_manage_forms).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this formulario.
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFormularioDetail'
+          description: ''
+  /api/v1/admin/forms/{id}/submissions/{submission_id}/:
+    get:
+      operationId: v1_admin_forms_submissions_retrieve_2
+      description: CRUD y ciclo de vida de formularios dinámicos para administradores
+        (can_manage_forms).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this formulario.
+        required: true
+      - in: path
+        name: submission_id
+        schema:
+          type: string
+          pattern: ^[0-9a-f-]+$
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFormularioDetail'
+          description: ''
+  /api/v1/admin/forms/{id}/versions/{version_num}/create-draft/:
+    post:
+      operationId: v1_admin_forms_versions_create_draft_create
+      description: CRUD y ciclo de vida de formularios dinámicos para administradores
+        (can_manage_forms).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this formulario.
+        required: true
+      - in: path
+        name: version_num
+        schema:
+          type: string
+          pattern: ^[0-9]+$
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AdminFormularioDetail'
+        required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFormularioDetail'
+          description: ''
   /api/v1/admin/home-hero/:
     get:
       operationId: v1_admin_home_hero_retrieve
@@ -7986,6 +8484,49 @@ paths:
       responses:
         '204':
           description: No response body
+  /api/v1/me/forms/submissions/:
+    get:
+      operationId: v1_me_forms_submissions_retrieve
+      description: 'GET /api/v1/me/forms/submissions/: Listado de formularios enviados
+        por el ciudadano.'
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CitizenSubmissionList'
+          description: ''
+  /api/v1/me/forms/submissions/{submission_id}/:
+    get:
+      operationId: v1_me_forms_submissions_retrieve_2
+      description: 'GET /api/v1/me/forms/submissions/{id}/: Detalle histórico de un
+        formulario enviado.'
+      parameters:
+      - in: path
+        name: submission_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CitizenSubmissionDetail'
+          description: ''
   /api/v1/me/notifications/:
     get:
       operationId: v1_me_notifications_list
@@ -8748,6 +9289,132 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EventProposal'
+          description: ''
+  /api/v1/public/forms/{slug}/:
+    get:
+      operationId: v1_public_forms_retrieve
+      description: 'GET /api/v1/public/forms/{slug}/: Consulta del formulario vigente
+        para el ciudadano.'
+      parameters:
+      - in: path
+        name: slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicFormularioDetail'
+          description: ''
+  /api/v1/public/forms/{slug}/submit/:
+    post:
+      operationId: v1_public_forms_submit_create
+      description: |-
+        POST /api/v1/public/forms/{slug}/submit/: Envío público de respuestas.
+        Exige la cabecera obligatoria Idempotency-Key.
+        Respuesta neutral anti-enumeración.
+      parameters:
+      - in: path
+        name: slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublicFormularioSubmit'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PublicFormularioSubmit'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PublicFormularioSubmit'
+        required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicFormularioSubmit'
+          description: ''
+  /api/v1/public/forms/activation/resend/:
+    post:
+      operationId: v1_public_forms_activation_resend_create
+      description: 'POST /api/v1/public/forms/activation/resend/: Reenvío de token
+        neutral.'
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublicActivationResend'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PublicActivationResend'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PublicActivationResend'
+        required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicActivationResend'
+          description: ''
+  /api/v1/public/forms/activation/verify/:
+    post:
+      operationId: v1_public_forms_activation_verify_create
+      description: 'POST /api/v1/public/forms/activation/verify/: Activación y fijación
+        de contraseña.'
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublicActivationVerify'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PublicActivationVerify'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PublicActivationVerify'
+        required: true
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicActivationVerify'
           description: ''
   /api/v1/public/home/:
     get:
@@ -9911,6 +10578,164 @@ components:
       - revisor
       - titulo
       - usuario
+    AdminFormularioCreateUpdate:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        slug:
+          type: string
+          maxLength: 120
+          pattern: ^[-a-zA-Z0-9_]+$
+        titulo:
+          type: string
+          maxLength: 255
+        descripcion:
+          type: string
+        estado:
+          allOf:
+          - $ref: '#/components/schemas/Estado79bEnum'
+          readOnly: true
+        requiere_documento:
+          type: boolean
+        permite_multiples_envios:
+          type: boolean
+        numero_version_publicada:
+          type: integer
+          readOnly: true
+          description: Última versión formal congelada y publicada (0 si solo tiene
+            borrador)
+        revision_edicion:
+          type: integer
+          readOnly: true
+          description: Contador incremental de edición para concurrencia optimista
+        revision_esperada:
+          type: integer
+          writeOnly: true
+        preguntas:
+          type: array
+          items:
+            $ref: '#/components/schemas/FormularioPregunta'
+      required:
+      - estado
+      - id
+      - numero_version_publicada
+      - revision_edicion
+      - slug
+      - titulo
+    AdminFormularioDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        slug:
+          type: string
+          maxLength: 120
+          pattern: ^[-a-zA-Z0-9_]+$
+        titulo:
+          type: string
+          maxLength: 255
+        descripcion:
+          type: string
+        estado:
+          $ref: '#/components/schemas/Estado79bEnum'
+        requiere_documento:
+          type: boolean
+        permite_multiples_envios:
+          type: boolean
+        numero_version_publicada:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: 0
+          format: int64
+          description: Última versión formal congelada y publicada (0 si solo tiene
+            borrador)
+        revision_edicion:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: 0
+          format: int64
+          description: Contador incremental de edición para concurrencia optimista
+        total_envios:
+          type: integer
+          readOnly: true
+        fecha_creacion:
+          type: string
+          format: date-time
+        fecha_actualizacion:
+          type: string
+          format: date-time
+        preguntas_borrador:
+          type: array
+          items:
+            $ref: '#/components/schemas/FormularioPregunta'
+          readOnly: true
+        versiones:
+          type: array
+          items: {}
+          readOnly: true
+      required:
+      - id
+      - preguntas_borrador
+      - slug
+      - titulo
+      - total_envios
+      - versiones
+    AdminFormularioList:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        slug:
+          type: string
+          maxLength: 120
+          pattern: ^[-a-zA-Z0-9_]+$
+        titulo:
+          type: string
+          maxLength: 255
+        estado:
+          $ref: '#/components/schemas/Estado79bEnum'
+        numero_version_publicada:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: 0
+          format: int64
+          description: Última versión formal congelada y publicada (0 si solo tiene
+            borrador)
+        revision_edicion:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: 0
+          format: int64
+          description: Contador incremental de edición para concurrencia optimista
+        total_versiones:
+          type: integer
+          readOnly: true
+        total_envios:
+          type: integer
+          readOnly: true
+        permite_multiples_envios:
+          type: boolean
+        requiere_documento:
+          type: boolean
+        fecha_creacion:
+          type: string
+          format: date-time
+        fecha_actualizacion:
+          type: string
+          format: date-time
+      required:
+      - id
+      - slug
+      - titulo
+      - total_envios
+      - total_versiones
     AdminInitiative:
       type: object
       properties:
@@ -11204,6 +12029,59 @@ components:
           type: boolean
       required:
       - password
+    CitizenSubmissionDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        formulario_titulo:
+          type: string
+          readOnly: true
+        numero_version:
+          type: integer
+          readOnly: true
+        fecha_envio:
+          type: string
+          format: date-time
+        respuestas:
+          type: array
+          items:
+            $ref: '#/components/schemas/FormularioRespuestaDetail'
+          readOnly: true
+      required:
+      - formulario_titulo
+      - id
+      - numero_version
+      - respuestas
+    CitizenSubmissionList:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        formulario:
+          type: object
+          additionalProperties: {}
+          readOnly: true
+        numero_version:
+          type: integer
+          readOnly: true
+        fecha_envio:
+          type: string
+          format: date-time
+        estado_vinculacion:
+          $ref: '#/components/schemas/EstadoVinculacionEnum'
+        total_respuestas:
+          type: integer
+          readOnly: true
+      required:
+      - formulario
+      - id
+      - numero_version
+      - total_respuestas
     CommentModerationAction:
       type: object
       properties:
@@ -11354,6 +12232,32 @@ components:
       - id_caso
       - ultimo_mensaje
       - unread_count
+    DatosIdentificacion:
+      type: object
+      properties:
+        nombres:
+          type: string
+          maxLength: 150
+        apellidos:
+          type: string
+          maxLength: 150
+        correo:
+          type: string
+          format: email
+          maxLength: 254
+        telefono:
+          type: string
+          maxLength: 30
+        tipo_documento:
+          type: string
+          maxLength: 20
+        numero_documento:
+          type: string
+          maxLength: 50
+      required:
+      - apellidos
+      - correo
+      - nombres
     Department:
       type: object
       properties:
@@ -11405,6 +12309,18 @@ components:
         * `activo` - Activo
         * `suspendido` - Suspendido
         * `inactivo` - Inactivo
+    Estado79bEnum:
+      enum:
+      - borrador
+      - publicado
+      - cerrado
+      - archivado
+      type: string
+      description: |-
+        * `borrador` - Borrador
+        * `publicado` - Publicado
+        * `cerrado` - Cerrado
+        * `archivado` - Archivado
     EstadoC21Enum:
       enum:
       - planificada
@@ -11461,6 +12377,24 @@ components:
         * `pendiente` - Pendiente
         * `aprobada` - Aprobada
         * `rechazada` - Rechazada
+    EstadoVinculacionEnum:
+      enum:
+      - vinculado
+      - pendiente_activacion
+      - pendiente_reivindicacion
+      - conflicto_identidad
+      - pendiente_verificacion
+      - contacto_institucional
+      - rechazado_por_politica
+      type: string
+      description: |-
+        * `vinculado` - Vinculado a Cuenta
+        * `pendiente_activacion` - Pendiente de Activación de Cuenta
+        * `pendiente_reivindicacion` - Pendiente de Reivindicación de Envío
+        * `conflicto_identidad` - Conflicto de Identidad
+        * `pendiente_verificacion` - Pendiente de Verificación de Identidad
+        * `contacto_institucional` - Contacto Institucional
+        * `rechazado_por_politica` - Rechazado por Política de Cuenta
     EventProposal:
       type: object
       properties:
@@ -11601,6 +12535,83 @@ components:
       - id_caso
       - id_seguimiento_usuario
       - titulo
+    FormularioOpcion:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        valor:
+          type: string
+          maxLength: 100
+        etiqueta:
+          type: string
+          maxLength: 255
+        orden:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: 0
+          format: int64
+      required:
+      - etiqueta
+      - id
+      - valor
+    FormularioPregunta:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        codigo:
+          type: string
+          maxLength: 60
+        enunciado:
+          type: string
+        descripcion_ayuda:
+          type: string
+        tipo_campo:
+          $ref: '#/components/schemas/TipoCampoEnum'
+        es_obligatorio:
+          type: boolean
+        orden:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: 0
+          format: int64
+        configuracion_validacion: {}
+        opciones:
+          type: array
+          items:
+            $ref: '#/components/schemas/FormularioOpcion'
+      required:
+      - codigo
+      - enunciado
+      - id
+      - tipo_campo
+    FormularioRespuestaDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        codigo_pregunta:
+          type: string
+          maxLength: 60
+        enunciado_congelado:
+          type: string
+        tipo_campo_congelado:
+          type: string
+          maxLength: 30
+        valor:
+          type: string
+          readOnly: true
+      required:
+      - codigo_pregunta
+      - id
+      - valor
     GeoJSONCaseFeature:
       type: object
       properties:
@@ -13001,6 +14012,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AdminEventProposal'
+    PaginatedAdminFormularioListList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminFormularioList'
     PaginatedAdminInitiativeList:
       type: object
       required:
@@ -13966,6 +15000,46 @@ components:
           type: string
           format: date-time
           nullable: true
+    PatchedAdminFormularioCreateUpdate:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        slug:
+          type: string
+          maxLength: 120
+          pattern: ^[-a-zA-Z0-9_]+$
+        titulo:
+          type: string
+          maxLength: 255
+        descripcion:
+          type: string
+        estado:
+          allOf:
+          - $ref: '#/components/schemas/Estado79bEnum'
+          readOnly: true
+        requiere_documento:
+          type: boolean
+        permite_multiples_envios:
+          type: boolean
+        numero_version_publicada:
+          type: integer
+          readOnly: true
+          description: Última versión formal congelada y publicada (0 si solo tiene
+            borrador)
+        revision_edicion:
+          type: integer
+          readOnly: true
+          description: Contador incremental de edición para concurrencia optimista
+        revision_esperada:
+          type: integer
+          writeOnly: true
+        preguntas:
+          type: array
+          items:
+            $ref: '#/components/schemas/FormularioPregunta'
     PatchedAdminInitiative:
       type: object
       properties:
@@ -15075,6 +16149,9 @@ components:
         can_manage_homepage:
           type: boolean
           readOnly: true
+        can_manage_forms:
+          type: boolean
+          readOnly: true
         perfil:
           type: object
           additionalProperties: {}
@@ -15146,6 +16223,28 @@ components:
         * `media` - Media
         * `alta` - Alta
         * `critica` - Crítica
+    PublicActivationResend:
+      type: object
+      properties:
+        correo:
+          type: string
+          format: email
+          maxLength: 254
+      required:
+      - correo
+    PublicActivationVerify:
+      type: object
+      properties:
+        token:
+          type: string
+          maxLength: 128
+        nueva_contrasena:
+          type: string
+          writeOnly: true
+          minLength: 8
+      required:
+      - nueva_contrasena
+      - token
     PublicCaseCategoryNamesResponse:
       type: object
       properties:
@@ -15602,6 +16701,63 @@ components:
       - tipo_evento
       - titulo
       - visible_publicamente
+    PublicFormularioDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        slug:
+          type: string
+          maxLength: 120
+          pattern: ^[-a-zA-Z0-9_]+$
+        titulo:
+          type: string
+          maxLength: 255
+        descripcion:
+          type: string
+        estado:
+          $ref: '#/components/schemas/Estado79bEnum'
+        requiere_documento:
+          type: boolean
+        permite_multiples_envios:
+          type: boolean
+        version_activa:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          readOnly: true
+        politica_datos:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          readOnly: true
+      required:
+      - id
+      - politica_datos
+      - slug
+      - titulo
+      - version_activa
+    PublicFormularioSubmit:
+      type: object
+      properties:
+        datos_identificacion:
+          $ref: '#/components/schemas/DatosIdentificacion'
+        acepta_politica_datos:
+          type: boolean
+        id_documento_legal:
+          type: string
+          format: uuid
+        respuestas:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicRespuestaItem'
+      required:
+      - acepta_politica_datos
+      - datos_identificacion
+      - id_documento_legal
+      - respuestas
     PublicHomeSummaryResponse:
       type: object
       properties:
@@ -15637,6 +16793,35 @@ components:
             type: string
       required:
       - categories
+    PublicRespuestaItem:
+      type: object
+      properties:
+        id_pregunta:
+          type: string
+          format: uuid
+        valor_texto:
+          type: string
+          nullable: true
+        valor_numero:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,4})?$
+          nullable: true
+        valor_fecha:
+          type: string
+          nullable: true
+        valor_booleano:
+          type: boolean
+          nullable: true
+        valor_seleccionado:
+          type: string
+          nullable: true
+        valores_seleccionados:
+          type: array
+          items:
+            type: string
+      required:
+      - id_pregunta
     PublicSiteInfoResponse:
       type: object
       properties:
@@ -15772,6 +16957,24 @@ components:
         * `imagen` - Imagen
         * `video` - Video
         * `documento` - Documento
+    TipoCampoEnum:
+      enum:
+      - texto_corto
+      - texto_largo
+      - numero
+      - fecha
+      - booleano
+      - seleccion_unica
+      - seleccion_multiple
+      type: string
+      description: |-
+        * `texto_corto` - Texto Corto
+        * `texto_largo` - Texto Largo
+        * `numero` - Número
+        * `fecha` - Fecha (YYYY-MM-DD)
+        * `booleano` - Booleano (Sí/No)
+        * `seleccion_unica` - Selección Única
+        * `seleccion_multiple` - Selección Múltiple
     TipoEventoEnum:
       enum:
       - seguimiento
@@ -15960,6 +17163,9 @@ components:
         can_manage_homepage:
           type: boolean
           readOnly: true
+        can_manage_forms:
+          type: boolean
+          readOnly: true
         perfil:
           type: object
           additionalProperties: {}
@@ -15999,6 +17205,7 @@ components:
       required:
       - ambitos_responsable
       - apellidos
+      - can_manage_forms
       - can_manage_homepage
       - correo
       - estado

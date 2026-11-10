@@ -167,6 +167,7 @@ class UserMeSerializer(serializers.ModelSerializer):
     roles = serializers.SerializerMethodField()
     permissions = serializers.SerializerMethodField()
     can_manage_homepage = serializers.BooleanField(read_only=True)
+    can_manage_forms = serializers.BooleanField(read_only=True)
     full_name = serializers.CharField(read_only=True)
     perfil = serializers.SerializerMethodField()
     preferencias = serializers.SerializerMethodField()
@@ -197,6 +198,7 @@ class UserMeSerializer(serializers.ModelSerializer):
             'roles',
             'permissions',
             'can_manage_homepage',
+            'can_manage_forms',
             'perfil',
             'preferencias',
             'ambitos_responsable',
@@ -216,6 +218,7 @@ class UserMeSerializer(serializers.ModelSerializer):
             'roles',
             'permissions',
             'can_manage_homepage',
+            'can_manage_forms',
             'perfil',
             'preferencias',
             'ambitos_responsable',

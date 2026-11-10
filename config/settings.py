@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'apps.communications',
     'apps.notifications',
     'apps.audit',
+    'apps.dynamic_forms',
 ]
 
 AUTH_USER_MODEL = 'accounts.User'
@@ -212,6 +213,7 @@ EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '15'))
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'https://fundacionplus.site').strip().rstrip('/')
 PASSWORD_RESET_TIMEOUT = int(os.getenv('PASSWORD_RESET_TIMEOUT', '3600'))
+FORM_ACCOUNT_ACTIVATION_TIMEOUT = int(os.getenv('FORM_ACCOUNT_ACTIVATION_TIMEOUT', '172800'))
 PASSWORD_RESET_COOLDOWN_SECONDS = int(os.getenv('PASSWORD_RESET_COOLDOWN_SECONDS', '60'))
 
 # JWT Configuration (djangorestframework-simplejwt)

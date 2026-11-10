@@ -291,5 +291,6 @@ urlpatterns = [
     ),
     path('admin/site/home-hero/', AdminHomeHeroView.as_view(), name='admin-site-home-hero'),
     path('admin/home-hero/', AdminHomeHeroView.as_view(), name='admin-home-hero-alias'),
+    path('', include('apps.dynamic_forms.urls')),
     path('admin/', include(admin_router.urls)),
 ]
