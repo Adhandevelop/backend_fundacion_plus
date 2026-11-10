@@ -24,7 +24,7 @@ class IsClientOnly(BasePermission):
 
 
 class IsResponsibleOrAdmin(BasePermission):
-    """Permite acceso a representante, moderador o administrador."""
+    """Permite acceso a representante territorial, moderador o administrador."""
 
     def has_permission(self, request, view):
         user = request.user
@@ -32,32 +32,62 @@ class IsResponsibleOrAdmin(BasePermission):
             user
             and user.is_authenticated
             and user.is_active
-            and user.has_any_role(
-                Role.Nombre.REPRESENTANTE,
-                Role.Nombre.MODERADOR,
-                Role.Nombre.ADMINISTRADOR,
+            and (
+                user.is_superuser
+                or user.has_any_role(
+                    Role.Nombre.REPRESENTANTE,
+                    Role.Nombre.MODERADOR,
+                    Role.Nombre.ADMINISTRADOR,
+                )
             )
         )
 
 
-class IsEditorOrAdmin(BasePermission):
+class IsRepresentativeOrAdmin(BasePermission):
+    """Permite acceso a representante territorial o administrador."""
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and user.is_active
+            and (
+                user.is_superuser
+                or user.has_any_role(
+                    Role.Nombre.REPRESENTANTE,
+                    Role.Nombre.ADMINISTRADOR,
+                )
+            )
+        )
+
+
+class IsModeratorOrAdmin(BasePermission):
+    """Permite acceso a moderador o administrador (p. ej. moderación de casos y comentarios)."""
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and user.is_active
+            and (
+                user.is_superuser
+                or user.has_any_role(
+                    Role.Nombre.MODERADOR,
+                    Role.Nombre.ADMINISTRADOR,
+                )
+            )
+        )
+
+
+class IsEditorOrAdmin(IsModeratorOrAdmin):
     """Permite acceso a moderador/editor o administrador."""
-
-    def has_permission(self, request, view):
-        user = request.user
-        return bool(
-            user
-            and user.is_authenticated
-            and user.is_active
-            and user.has_any_role(
-                Role.Nombre.MODERADOR,
-                Role.Nombre.ADMINISTRADOR,
-            )
-        )
+    pass
 
 
 class IsAdminOrSuperAdmin(BasePermission):
-    """Permite acceso a administrador o moderador en funciones administrativas."""
+    """Permite acceso exclusivamente al rol administrador general de PLUS o superusuario de Django."""
 
     def has_permission(self, request, view):
         user = request.user
@@ -65,18 +95,17 @@ class IsAdminOrSuperAdmin(BasePermission):
             user
             and user.is_authenticated
             and user.is_active
-            and user.has_any_role(Role.Nombre.ADMINISTRADOR, Role.Nombre.MODERADOR)
+            and (
+                user.is_superuser
+                or user.get_primary_role() == Role.Nombre.ADMINISTRADOR
+            )
         )
 
 
-class IsSuperAdmin(BasePermission):
+IsAdminUser = IsAdminOrSuperAdmin
+IsAdminOnly = IsAdminOrSuperAdmin
+
+
+class IsSuperAdmin(IsAdminOrSuperAdmin):
     """Permite acceso exclusivamente al rol administrador general de PLUS."""
-
-    def has_permission(self, request, view):
-        user = request.user
-        return bool(
-            user
-            and user.is_authenticated
-            and user.is_active
-            and user.get_primary_role() == Role.Nombre.ADMINISTRADOR
-        )
+    pass

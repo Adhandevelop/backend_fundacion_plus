@@ -10,7 +10,7 @@ from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
-from apps.accounts.models import Role
+from apps.accounts.models import Role, User
 from apps.audit.models import AuditAccess, AuditPermission
 
 
@@ -288,3 +288,121 @@ class AuthAndRBACTests(APITestCase):
         )
         logged_text = '\n'.join(cm.output)
         self.assertNotIn(token, logged_text)
+
+    def test_p01_and_p15_granular_rbac_and_user_management_boundaries(self):
+        """P01 y P15: Separación estricta de roles e impedimento de saltarse restricciones."""
+        mod_role, _ = Role.objects.get_or_create(nombre=Role.Nombre.MODERADOR)
+        rep_role, _ = Role.objects.get_or_create(nombre=Role.Nombre.REPRESENTANTE)
+
+        moderador = User.objects.create_user(
+            correo='moderador@plus.org',
+            password='Password123!',
+            rol=mod_role,
+            nombres='Marta',
+            apellidos='Moderadora',
+        )
+        representante = User.objects.create_user(
+            correo='representante@plus.org',
+            password='Password123!',
+            rol=rep_role,
+            nombres='Roberto',
+            apellidos='Representante',
+        )
+
+        mod_token = Token.objects.create(user=moderador)
+        rep_token = Token.objects.create(user=representante)
+        cliente_token = Token.objects.create(user=self.cliente)
+
+        # 1. Moderador no puede acceder a gestión de usuarios, roles ni auditoría
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {mod_token.key}')
+        self.assertEqual(self.client.get('/api/v1/admin/users/').status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.get('/api/v1/admin/roles/').status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.get('/api/v1/admin/audit-logs/').status_code, status.HTTP_403_FORBIDDEN)
+        # Intento de crear usuario por moderador debe ser rechazado
+        create_attempt = self.client.post(
+            '/api/v1/admin/users/',
+            {'correo': 'hacker@plus.org', 'password': 'Password123!', 'nombres': 'X', 'apellidos': 'Y'},
+            format='json',
+        )
+        self.assertEqual(create_attempt.status_code, status.HTTP_403_FORBIDDEN)
+
+        # 2. Representante tampoco puede acceder a gestión de usuarios ni roles
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {rep_token.key}')
+        self.assertEqual(self.client.get('/api/v1/admin/users/').status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.get('/api/v1/admin/roles/').status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.get('/api/v1/admin/audit-logs/').status_code, status.HTTP_403_FORBIDDEN)
+
+        # 3. Ciudadano no puede acceder a ningún endpoint administrativo
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {cliente_token.key}')
+        self.assertEqual(self.client.get('/api/v1/admin/users/').status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.get('/api/v1/admin/cases/').status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.get('/api/v1/admin/roles/').status_code, status.HTTP_403_FORBIDDEN)
+
+        # 4. Administrador sí puede gestionar usuarios
+        admin_token = Token.objects.create(user=self.admin)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {admin_token.key}')
+        users_resp = self.client.get('/api/v1/admin/users/')
+        self.assertEqual(users_resp.status_code, status.HTTP_200_OK)
+
+        # 5. Protección de auto-bloqueo del único administrador
+        demote_self = self.client.put(
+            f'/api/v1/admin/users/{self.admin.id}/role/',
+            {'role_code': 'ciudadano', 'motivo': 'Prueba democión'},
+            format='json',
+        )
+        self.assertEqual(demote_self.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(demote_self.data['code'], 'last_admin_lock')
+
+    def test_p16_session_revocation_on_role_and_status_change(self):
+        """P16: Revocación inmediata de sesión JWT al cambiar rol o estado."""
+        # 1. Login del usuario para emitir access y refresh con 'sid'
+        login_resp = self.client.post(
+            '/api/v1/auth/login/',
+            {'correo': 'cliente1@plus.org', 'password': 'ClaveSegura123!'},
+            format='json',
+        )
+        self.assertEqual(login_resp.status_code, status.HTTP_200_OK)
+        active_access = login_resp.data['tokens']['access']
+        active_refresh = login_resp.data['tokens']['refresh']
+
+        # Verificar que la sesión actual funciona
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {active_access}')
+        me_resp = self.client.get('/api/v1/me/')
+        self.assertEqual(me_resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(me_resp.data['primary_role'], Role.Nombre.CIUDADANO)
+
+        # 2. Administrador cambia el rol del usuario a 'representante'
+        admin_token = Token.objects.create(user=self.admin)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {admin_token.key}')
+        role_change_resp = self.client.put(
+            f'/api/v1/admin/users/{self.cliente.id}/role/',
+            {'role_code': 'representante', 'motivo': 'Ascenso a representante territorial'},
+            format='json',
+        )
+        self.assertEqual(role_change_resp.status_code, status.HTTP_200_OK)
+        self.cliente.refresh_from_db()
+        self.assertEqual(self.cliente.get_primary_role(), Role.Nombre.REPRESENTANTE)
+
+        # 3. La sesión anterior del usuario queda inmediatamente invalidada
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {active_access}')
+        blocked_request = self.client.get('/api/v1/me/')
+        self.assertEqual(blocked_request.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        # 4. El token refresh anterior también queda invalidado
+        self.client.credentials()
+        blocked_refresh = self.client.post(
+            '/api/v1/auth/refresh/',
+            {'refresh': active_refresh},
+            format='json',
+        )
+        self.assertEqual(blocked_refresh.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        # 5. Nuevo login genera sesión fresca con el rol actualizado
+        new_login = self.client.post(
+            '/api/v1/auth/login/',
+            {'correo': 'cliente1@plus.org', 'password': 'ClaveSegura123!'},
+            format='json',
+        )
+        self.assertEqual(new_login.status_code, status.HTTP_200_OK)
+        self.assertEqual(new_login.data['primary_role'], Role.Nombre.REPRESENTANTE)
+        self.assertIn('representante', new_login.data['roles'])

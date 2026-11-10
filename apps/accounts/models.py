@@ -291,6 +291,9 @@ class User(AbstractBaseUser):
             return True
         return current in normalized_targets
 
+    def has_role(self, role_name: str) -> bool:
+        return self.has_any_role(role_name)
+
     def get_aggregated_permissions(self) -> dict:
         role_name = normalize_role_name(self.get_primary_role())
         return ROLE_PERMISSIONS_MAP.get(role_name, ROLE_PERMISSIONS_MAP[Role.Nombre.CIUDADANO])

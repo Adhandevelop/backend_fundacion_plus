@@ -32,6 +32,8 @@ from apps.accounts.models import (
 from apps.accounts.permissions import (
     IsAdminOrSuperAdmin,
     IsClientOnly,
+    IsModeratorOrAdmin,
+    IsResponsibleOrAdmin,
     IsSuperAdmin,
 )
 from apps.accounts.serializers import (
@@ -582,7 +584,15 @@ class ChangePasswordView(APIView):
         AuditService.set_db_actor_session(request.user)
         request.user.set_password(serializer.validated_data['new_password'])
         request.user.save(update_fields=['password', 'fecha_actualizacion'])
-        return Response({'message': 'Contraseña actualizada exitosamente.'}, status=status.HTTP_200_OK)
+        Token.objects.filter(user=request.user).delete()
+        tokens = get_tokens_for_user(request.user)
+        return Response(
+            {
+                'message': 'Contraseña actualizada exitosamente.',
+                'tokens': tokens,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class ClienteProfileView(APIView):
@@ -603,7 +613,7 @@ class ClienteProfileView(APIView):
 
 class AdministrativoProfileView(APIView):
     """GET /api/administrativos/me/"""
-    permission_classes = [IsAdminOrSuperAdmin]
+    permission_classes = [IsResponsibleOrAdmin]
     serializer_class = UserMeSerializer
 
     def get(self, request):
@@ -675,8 +685,15 @@ class AdminUserViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         AuditService.set_db_actor_session(self.request.user)
-        prev_role_id = str(serializer.instance.rol_id)
+        prev_user = serializer.instance
+        prev_role_id = str(prev_user.rol_id) if prev_user.rol_id else None
+        prev_estado = prev_user.estado
         user = serializer.save()
+
+        # P16: Revocar sesión activa de inmediato ante cambio de rol o estado
+        if (str(user.rol_id) != prev_role_id) or (user.estado != prev_estado):
+            Token.objects.filter(user=user).delete()
+
         if str(user.rol_id) != prev_role_id:
             AuditService.log_permission_change(
                 usuario_afectado=user,
@@ -716,16 +733,37 @@ class AdminUserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # Impedir auto-degradación si es el único administrador activo
+        if (
+            target_user.id == request.user.id
+            and target_role_name != Role.Nombre.ADMINISTRADOR
+            and User.objects.filter(rol__nombre=Role.Nombre.ADMINISTRADOR, estado=User.Estado.ACTIVO).count() <= 1
+        ):
+            return Response(
+                {
+                    'code': 'last_admin_lock',
+                    'message': 'No puedes revocar tus propios permisos de administrador porque eres el único administrador activo.',
+                    'errors': {},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         prev_role = target_user.rol
+        role_changed = prev_role is None or prev_role.id != new_role.id
+
         AuditService.set_db_actor_session(request.user)
         target_user.rol = new_role
         target_user.save(update_fields=['rol', 'fecha_actualizacion'])
+
+        # P16: Revocar sesiones activas del usuario afectado para forzar refresco y evitar navegación con rol desactualizado
+        if role_changed:
+            Token.objects.filter(user=target_user).delete()
 
         AuditService.log_permission_change(
             usuario_afectado=target_user,
             usuario_responsable=request.user,
             tipo_cambio='cambio_rol',
-            valor_anterior={'id_rol': str(prev_role.id), 'nombre': prev_role.nombre},
+            valor_anterior={'id_rol': str(prev_role.id) if prev_role else None, 'nombre': prev_role.nombre if prev_role else ''},
             valor_nuevo={'id_rol': str(new_role.id), 'nombre': new_role.nombre},
             motivo=serializer.validated_data.get('motivo', ''),
             request=request,
@@ -790,12 +828,27 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         new_estado = serializer.validated_data['estado']
         prev_estado = target_user.estado
 
+        # Impedir auto-desactivación si es el único administrador activo
+        if (
+            target_user.id == request.user.id
+            and new_estado != User.Estado.ACTIVO
+            and User.objects.filter(rol__nombre=Role.Nombre.ADMINISTRADOR, estado=User.Estado.ACTIVO).count() <= 1
+        ):
+            return Response(
+                {
+                    'code': 'last_admin_lock',
+                    'message': 'No puedes suspender o desactivar tu cuenta porque eres el único administrador activo.',
+                    'errors': {},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         AuditService.set_db_actor_session(request.user)
         target_user.estado = new_estado
         target_user.save(update_fields=['estado', 'fecha_actualizacion'])
 
-        if new_estado != User.Estado.ACTIVO:
-            Token.objects.filter(user=target_user).delete()
+        # P16: Revocar sesiones activas ante cualquier cambio de estado
+        Token.objects.filter(user=target_user).delete()
 
         AuditService.log(
             actor=request.user,

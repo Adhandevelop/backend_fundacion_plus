@@ -61,7 +61,7 @@ class CaseService:
     def user_can_manage_case(user: User, case: Case) -> bool:
         if not user or not user.is_authenticated:
             return False
-        if user.has_any_role(Role.Nombre.ADMINISTRADOR, Role.Nombre.MODERADOR):
+        if user.is_superuser or user.has_any_role(Role.Nombre.ADMINISTRADOR):
             return True
         if user.has_any_role(Role.Nombre.REPRESENTANTE):
             return case.asignaciones.filter(responsable=user, activo=True).exists()
@@ -74,8 +74,10 @@ class CaseService:
         actions = ['view']
         if case.usuario_id == user.id:
             actions.extend(['contribute', 'upload_evidence', 'message'])
-        if user.has_any_role(Role.Nombre.ADMINISTRADOR, Role.Nombre.MODERADOR):
+        if user.is_superuser or user.has_any_role(Role.Nombre.ADMINISTRADOR):
             actions.extend(['moderate', 'request_correction', 'assign', 'progress', 'resolve', 'manage_evidence', 'message'])
+        elif user.has_any_role(Role.Nombre.MODERADOR):
+            actions.extend(['moderate', 'request_correction', 'manage_evidence', 'message'])
         elif cls.user_can_manage_case(user, case):
             actions.extend(['progress', 'resolve', 'upload_evidence', 'message'])
         return list(dict.fromkeys(actions))

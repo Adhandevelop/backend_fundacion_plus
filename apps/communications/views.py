@@ -9,7 +9,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import Role, User, UserPreference
-from apps.accounts.permissions import IsAdminOrSuperAdmin, IsCitizen
+from apps.accounts.permissions import (
+    IsAdminOrSuperAdmin,
+    IsCitizen,
+    IsModeratorOrAdmin,
+)
 from apps.audit.services import AuditService
 from apps.cases.models import Case
 from apps.cases.services import CaseService
@@ -335,7 +339,7 @@ class CitizenCaseCommentCreateView(APIView):
 
 class AdminCaseCommentModerationViewSet(viewsets.ModelViewSet):
     serializer_class = CaseCommentSerializer
-    permission_classes = [IsAdminOrSuperAdmin]
+    permission_classes = [IsModeratorOrAdmin]
     http_method_names = ['get', 'post', 'delete', 'head', 'options']
 
     def get_queryset(self):
@@ -426,7 +430,7 @@ class AdminEventProposalViewSet(viewsets.ModelViewSet):
     """Sección 14: GET / PATCH /api/v1/admin/initiative-proposals/"""
     queryset = EventProposal.objects.select_related('comunidad', 'usuario', 'revisor').all()
     serializer_class = AdminEventProposalSerializer
-    permission_classes = [IsAdminOrSuperAdmin]
+    permission_classes = [IsModeratorOrAdmin]
 
     def perform_update(self, serializer):
         AuditService.set_db_actor_session(self.request.user)

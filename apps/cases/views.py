@@ -14,7 +14,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import Role, User
-from apps.accounts.permissions import IsAdminOrSuperAdmin, IsCitizen, IsResponsibleOrAdmin
+from apps.accounts.permissions import (
+    IsAdminOrSuperAdmin,
+    IsCitizen,
+    IsModeratorOrAdmin,
+    IsResponsibleOrAdmin,
+)
 from apps.audit.services import AuditService
 from apps.cases.models import (
     Case,
@@ -842,7 +847,7 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
         responses={200: AdminCaseDetailSerializer},
         summary='Aprobar, rechazar o solicitar corrección sobre la publicación de un caso (ADM-07)',
     )
-    @action(detail=True, methods=['post'], url_path='moderation', permission_classes=[IsAdminOrSuperAdmin])
+    @action(detail=True, methods=['post'], url_path='moderation', permission_classes=[IsModeratorOrAdmin])
     def moderation(self, request, pk=None):
         """ADM-07: POST /api/v1/admin/cases/{case_id}/moderation/"""
         return self._handle_moderation(request)
@@ -852,7 +857,7 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
         responses={200: AdminCaseDetailSerializer},
         summary='Alias compatible para moderar publicación de caso (ADM-07)',
     )
-    @action(detail=True, methods=['post'], url_path='moderate', permission_classes=[IsAdminOrSuperAdmin])
+    @action(detail=True, methods=['post'], url_path='moderate', permission_classes=[IsModeratorOrAdmin])
     def moderate(self, request, pk=None):
         """Alias compatible con POST /api/v1/admin/cases/{case_id}/moderate/"""
         return self._handle_moderation(request)
@@ -862,7 +867,7 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
         responses={201: CaseCorrectionRequestSerializer},
         summary='Crear solicitud formal de corrección para el ciudadano (ADM-07)',
     )
-    @action(detail=True, methods=['post'], url_path='correction-requests', permission_classes=[IsAdminOrSuperAdmin])
+    @action(detail=True, methods=['post'], url_path='correction-requests', permission_classes=[IsModeratorOrAdmin])
     def correction_requests(self, request, pk=None):
         """ADM-07: POST /api/v1/admin/cases/{case_id}/correction-requests/"""
         case = self.get_object()
@@ -1012,7 +1017,7 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
 class AdminCaseEvidenceViewSet(viewsets.ModelViewSet):
     queryset = CaseEvidence.objects.select_related('caso', 'usuario').all()
     serializer_class = CaseEvidenceSerializer
-    permission_classes = [IsAdminOrSuperAdmin]
+    permission_classes = [IsModeratorOrAdmin]
 
 
 class AdminCaseReportView(APIView):
