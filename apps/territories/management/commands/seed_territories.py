@@ -233,7 +233,7 @@ class Command(BaseCommand):
             # PUERTO GAITÁN (50568)
             # =========================================================
             ('50568', 'Barrio Centro', 'barrio', 'Casco urbano de Puerto Gaitán'),
-            ('50568', 'Resguardo Indígena Wacoyo', 'resguardo_indigena', 'Comunidad indígena sikuani'),
+            ('50568', 'Resguardo Indígena Wacoyo', 'sector', 'Comunidad indígena sikuani'),
             ('50568', 'Vereda Rubiales', 'vereda', 'Sector rural y de producción'),
 
             # =========================================================
