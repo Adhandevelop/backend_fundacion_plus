@@ -2400,6 +2400,88 @@ paths:
       responses:
         '204':
           description: No response body
+  /api/v1/admin/home-hero/:
+    get:
+      operationId: v1_admin_home_hero_retrieve
+      description: |-
+        Gestión exclusiva de la fotografía principal del inicio (Hero Image) de PLUS por superadministrador.
+        - GET: Consulta la fotografía y metadatos actuales.
+        - PUT / POST: Reemplaza la imagen mediante multipart/form-data con validación binaria (<= 5MB, JPG/PNG/WEBP).
+      summary: Consultar la fotografía principal del home (Hero) actual
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeHeroDetailResponse'
+          description: ''
+    post:
+      operationId: v1_admin_home_hero_create
+      description: |-
+        Gestión exclusiva de la fotografía principal del inicio (Hero Image) de PLUS por superadministrador.
+        - GET: Consulta la fotografía y metadatos actuales.
+        - PUT / POST: Reemplaza la imagen mediante multipart/form-data con validación binaria (<= 5MB, JPG/PNG/WEBP).
+      tags:
+      - v1
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/HomeHero'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/HomeHero'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HomeHero'
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeHero'
+          description: ''
+    put:
+      operationId: v1_admin_home_hero_update
+      description: |-
+        Gestión exclusiva de la fotografía principal del inicio (Hero Image) de PLUS por superadministrador.
+        - GET: Consulta la fotografía y metadatos actuales.
+        - PUT / POST: Reemplaza la imagen mediante multipart/form-data con validación binaria (<= 5MB, JPG/PNG/WEBP).
+      summary: Reemplazar la fotografía principal del home (Hero) (Exclusivo Superadministrador)
+      tags:
+      - v1
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/HomeHero'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/HomeHero'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HomeHero'
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeHeroUpdateResponse'
+          description: ''
   /api/v1/admin/initiative-activities/:
     get:
       operationId: v1_admin_initiative_activities_list
@@ -5130,6 +5212,88 @@ paths:
       responses:
         '204':
           description: No response body
+  /api/v1/admin/site/home-hero/:
+    get:
+      operationId: v1_admin_site_home_hero_retrieve
+      description: |-
+        Gestión exclusiva de la fotografía principal del inicio (Hero Image) de PLUS por superadministrador.
+        - GET: Consulta la fotografía y metadatos actuales.
+        - PUT / POST: Reemplaza la imagen mediante multipart/form-data con validación binaria (<= 5MB, JPG/PNG/WEBP).
+      summary: Consultar la fotografía principal del home (Hero) actual
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeHeroDetailResponse'
+          description: ''
+    post:
+      operationId: v1_admin_site_home_hero_create
+      description: |-
+        Gestión exclusiva de la fotografía principal del inicio (Hero Image) de PLUS por superadministrador.
+        - GET: Consulta la fotografía y metadatos actuales.
+        - PUT / POST: Reemplaza la imagen mediante multipart/form-data con validación binaria (<= 5MB, JPG/PNG/WEBP).
+      tags:
+      - v1
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/HomeHero'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/HomeHero'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HomeHero'
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeHero'
+          description: ''
+    put:
+      operationId: v1_admin_site_home_hero_update
+      description: |-
+        Gestión exclusiva de la fotografía principal del inicio (Hero Image) de PLUS por superadministrador.
+        - GET: Consulta la fotografía y metadatos actuales.
+        - PUT / POST: Reemplaza la imagen mediante multipart/form-data con validación binaria (<= 5MB, JPG/PNG/WEBP).
+      summary: Reemplazar la fotografía principal del home (Hero) (Exclusivo Superadministrador)
+      tags:
+      - v1
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/HomeHero'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/HomeHero'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HomeHero'
+      security:
+      - jwtAuth: []
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeHeroUpdateResponse'
+          description: ''
   /api/v1/admin/users/:
     get:
       operationId: v1_admin_users_list
@@ -11565,6 +11729,112 @@ components:
           minItems: 2
       required:
       - coordinates
+    HomeHero:
+      type: object
+      properties:
+        image:
+          type: string
+          format: uri
+          nullable: true
+          description: Archivo binario de imagen (JPG, PNG o WEBP, máx 5 MB)
+        alt_text:
+          type: string
+          description: Texto descriptivo o alternativo de la imagen
+        image_url:
+          type: string
+          readOnly: true
+        url:
+          type: string
+          readOnly: true
+        relative_url:
+          type: string
+          readOnly: true
+        api_media_url:
+          type: string
+          readOnly: true
+        version:
+          type: string
+          readOnly: true
+        updated_at:
+          type: string
+          readOnly: true
+        corporation_name:
+          type: string
+          readOnly: true
+        acronym:
+          type: string
+          readOnly: true
+      required:
+      - acronym
+      - api_media_url
+      - corporation_name
+      - image_url
+      - relative_url
+      - updated_at
+      - url
+      - version
+    HomeHeroDetailResponse:
+      type: object
+      properties:
+        clave:
+          type: string
+        image_url:
+          type: string
+        url:
+          type: string
+        relative_url:
+          type: string
+        api_media_url:
+          type: string
+        alt_text:
+          type: string
+        version:
+          type: string
+        updated_at:
+          type: string
+        corporation_name:
+          type: string
+        acronym:
+          type: string
+      required:
+      - acronym
+      - alt_text
+      - api_media_url
+      - clave
+      - corporation_name
+      - image_url
+      - relative_url
+      - updated_at
+      - url
+      - version
+    HomeHeroUpdateResponse:
+      type: object
+      properties:
+        clave:
+          type: string
+        image_url:
+          type: string
+        url:
+          type: string
+        relative_url:
+          type: string
+        api_media_url:
+          type: string
+        alt_text:
+          type: string
+        version:
+          type: string
+        updated_at:
+          type: string
+      required:
+      - alt_text
+      - api_media_url
+      - clave
+      - image_url
+      - relative_url
+      - updated_at
+      - url
+      - version
     InitiativeActivity:
       type: object
       properties:
@@ -14802,6 +15072,9 @@ components:
           type: object
           additionalProperties: {}
           readOnly: true
+        can_manage_homepage:
+          type: boolean
+          readOnly: true
         perfil:
           type: object
           additionalProperties: {}
@@ -15684,6 +15957,9 @@ components:
           type: object
           additionalProperties: {}
           readOnly: true
+        can_manage_homepage:
+          type: boolean
+          readOnly: true
         perfil:
           type: object
           additionalProperties: {}
@@ -15723,6 +15999,7 @@ components:
       required:
       - ambitos_responsable
       - apellidos
+      - can_manage_homepage
       - correo
       - estado
       - fecha_actualizacion

@@ -66,3 +66,9 @@ python manage.py test apps.accounts apps.cases -v 2
   - `/api/v1/admin/initiatives/`, `/api/v1/admin/initiative-activities/`, `/api/v1/admin/initiative-media/`, `/api/v1/admin/initiative-metrics/`
   - `/api/v1/admin/news/`, `/api/v1/admin/news-categories/`, `/api/v1/admin/settings/`, `/api/v1/admin/social-links/`
   - `GET /api/v1/admin/audit-logs/`
+
+---
+
+## 4. Guía de Despliegue y Territorios
+
+Para el procedimiento completo de actualización en el servidor con Docker Compose y la gestión del catálogo territorial (departamento del Meta vs. nivel nacional), consulta la [Guía de Despliegue y Territorios](../GUIA_DESPLIEGUE_Y_TERRITORIOS.md).

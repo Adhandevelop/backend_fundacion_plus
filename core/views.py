@@ -19,7 +19,7 @@ class PublicMediaServeView(APIView):
     """
     permission_classes = [permissions.AllowAny]
 
-    PUBLIC_PREFIXES = ('profiles/', 'news/', 'initiatives/')
+    PUBLIC_PREFIXES = ('profiles/', 'news/', 'initiatives/', 'site/')
 
     @extend_schema(
         parameters=[

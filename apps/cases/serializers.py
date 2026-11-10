@@ -484,8 +484,12 @@ class CitizenCaseCreateUpdateSerializer(serializers.ModelSerializer):
                     {'acepta_tratamiento_datos': 'Debe aceptar la política de tratamiento de datos para radicar el caso.'}
                 )
 
-        lat = attrs.pop('latitud', None) or attrs.pop('exact_latitude', None)
-        lon = attrs.pop('longitud', None) or attrs.pop('exact_longitude', None)
+        lat = attrs.pop('latitud', None)
+        if lat is None:
+            lat = attrs.pop('exact_latitude', None)
+        lon = attrs.pop('longitud', None)
+        if lon is None:
+            lon = attrs.pop('exact_longitude', None)
         if lat is not None and lon is not None and not attrs.get('ubicacion'):
             attrs['ubicacion'] = make_geojson_point(lon, lat)
         return attrs

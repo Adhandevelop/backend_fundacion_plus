@@ -263,6 +263,19 @@ class SiteSettingSerializer(serializers.ModelSerializer):
         }
 
 
+class HomeHeroSerializer(serializers.Serializer):
+    image = serializers.ImageField(required=False, help_text='Archivo binario de imagen (JPG, PNG o WEBP, máx 5 MB)')
+    alt_text = serializers.CharField(required=False, help_text='Texto descriptivo o alternativo de la imagen')
+    image_url = serializers.CharField(read_only=True)
+    url = serializers.CharField(read_only=True)
+    relative_url = serializers.CharField(read_only=True)
+    api_media_url = serializers.CharField(read_only=True)
+    version = serializers.CharField(read_only=True)
+    updated_at = serializers.CharField(read_only=True)
+    corporation_name = serializers.CharField(read_only=True)
+    acronym = serializers.CharField(read_only=True)
+
+
 class LegalDocumentSerializer(serializers.ModelSerializer):
     id_documento = serializers.UUIDField(source='id', read_only=True)
 

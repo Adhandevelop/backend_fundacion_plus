@@ -17,6 +17,7 @@ from apps.accounts.models import Role, User
 from apps.accounts.permissions import (
     IsAdminOrSuperAdmin,
     IsCitizen,
+    IsCitizenOnly,
     IsModeratorOrAdmin,
     IsResponsibleOrAdmin,
 )
@@ -403,7 +404,7 @@ class FollowedCaseView(APIView):
 
 class CitizenDashboardView(APIView):
     """CIT-01: GET /api/v1/me/dashboard/ (y /api/v1/citizen/dashboard/)"""
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsCitizenOnly]
 
     @extend_schema(
         responses={
@@ -454,7 +455,7 @@ class CitizenCaseViewSet(viewsets.ModelViewSet):
     Soporta lectura tanto por UUID como por código de radicado (`{case_ref}`).
     """
     serializer_class = CitizenCaseCreateUpdateSerializer
-    permission_classes = [IsCitizen]
+    permission_classes = [IsCitizenOnly]
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
 
     def get_queryset(self):
@@ -1086,8 +1087,18 @@ class AdminCaseReportView(APIView):
             'by_municipio': dict(qs.values_list('comunidad__municipio__nombre').annotate(total=Count('id'))),
         }
 
-        page_size = int(request.query_params.get('page_size', 20))
-        page = max(int(request.query_params.get('page', 1)), 1)
+        try:
+            page_size = max(min(int(request.query_params.get('page_size', 20)), 100), 1)
+            page = max(int(request.query_params.get('page', 1)), 1)
+        except (ValueError, TypeError):
+            return Response(
+                {
+                    'code': 'invalid_parameter',
+                    'message': 'Los parámetros page y page_size deben ser números enteros positivos.',
+                    'errors': {'page': ['Debe ser un entero positivo.'], 'page_size': ['Debe ser un entero entre 1 y 100.']},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         start = (page - 1) * page_size
         end = start + page_size
 

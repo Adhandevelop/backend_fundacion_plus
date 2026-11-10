@@ -46,6 +46,7 @@ from apps.cases.views import (
 from apps.communications.views import (
     AdminCaseCommentModerationViewSet,
     AdminEventProposalViewSet,
+    AdminHomeHeroView,
     AdminSiteSettingViewSet,
     CasePrivateMessageListCreateView,
     CasePrivateMessageMarkReadView,
@@ -288,5 +289,7 @@ urlpatterns = [
         CasePrivateMessageListCreateView.as_view(),
         name='admin-case-messages',
     ),
+    path('admin/site/home-hero/', AdminHomeHeroView.as_view(), name='admin-site-home-hero'),
+    path('admin/home-hero/', AdminHomeHeroView.as_view(), name='admin-home-hero-alias'),
     path('admin/', include(admin_router.urls)),
 ]

@@ -1,10 +1,14 @@
+import os
+import uuid
 from django.core.exceptions import PermissionDenied
+from django.core.files.storage import default_storage
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import generics, permissions, serializers as drf_serializers, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -13,8 +17,10 @@ from apps.accounts.permissions import (
     IsAdminOrSuperAdmin,
     IsCitizen,
     IsModeratorOrAdmin,
+    IsSuperAdmin,
 )
 from apps.audit.services import AuditService
+from core.validators import validate_home_hero_image
 from apps.cases.models import Case
 from apps.cases.services import CaseService
 from apps.cases.views import resolve_case_by_ref
@@ -33,6 +39,7 @@ from apps.communications.serializers import (
     CaseMessageSerializer,
     CommentModerationActionSerializer,
     EventProposalSerializer,
+    HomeHeroSerializer,
     LegalDocumentSerializer,
     NewsletterSubscriptionSerializer,
     NewsletterTokenActionSerializer,
@@ -148,9 +155,7 @@ class CasePrivateMessageListCreateView(APIView):
             messages_qs = messages_qs.filter(
                 Q(remitente_id=counterpart_id) | Q(destinatario_id=counterpart_id)
             )
-        messages_qs.filter(destinatario=request.user, fecha_lectura__isnull=True).update(
-            fecha_lectura=timezone.now(),
-        )
+        # P04: La lectura explícita se realiza a través de /messages/read/; GET es estrictamente de solo lectura
         return Response(CaseMessageSerializer(messages_qs, many=True).data)
 
     def post(self, request, case_id):
@@ -599,3 +604,191 @@ class AdminSiteSettingViewSet(viewsets.ModelViewSet):
     queryset = SiteSetting.objects.all()
     serializer_class = SiteSettingSerializer
     permission_classes = [IsAdminOrSuperAdmin]
+
+    PROTECTED_SUPERADMIN_KEYS = {'INSTITUTION_HERO', 'SUPERADMIN_EMAILS'}
+
+    def check_superadmin_guard(self, key: str | None):
+        if key in self.PROTECTED_SUPERADMIN_KEYS and not getattr(self.request.user, 'can_manage_homepage', False):
+            raise PermissionDenied(
+                f'Solo una cuenta superadministradora puede modificar la configuración protegida "{key}".'
+            )
+
+    def perform_create(self, serializer):
+        self.check_superadmin_guard(serializer.validated_data.get('clave'))
+        super().perform_create(serializer)
+
+    def perform_update(self, serializer):
+        self.check_superadmin_guard(serializer.instance.clave)
+        super().perform_update(serializer)
+
+    def perform_destroy(self, instance):
+        self.check_superadmin_guard(instance.clave)
+        super().perform_destroy(instance)
+
+
+class AdminHomeHeroView(APIView):
+    """
+    Gestión exclusiva de la fotografía principal del inicio (Hero Image) de PLUS por superadministrador.
+    - GET: Consulta la fotografía y metadatos actuales.
+    - PUT / POST: Reemplaza la imagen mediante multipart/form-data con validación binaria (<= 5MB, JPG/PNG/WEBP).
+    """
+    permission_classes = [IsSuperAdmin]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    serializer_class = HomeHeroSerializer
+
+    @extend_schema(
+        summary='Consultar la fotografía principal del home (Hero) actual',
+        responses={
+            200: inline_serializer(
+                name='HomeHeroDetailResponse',
+                fields={
+                    'clave': drf_serializers.CharField(),
+                    'image_url': drf_serializers.CharField(),
+                    'url': drf_serializers.CharField(),
+                    'relative_url': drf_serializers.CharField(),
+                    'api_media_url': drf_serializers.CharField(),
+                    'alt_text': drf_serializers.CharField(),
+                    'version': drf_serializers.CharField(),
+                    'updated_at': drf_serializers.CharField(),
+                    'corporation_name': drf_serializers.CharField(),
+                    'acronym': drf_serializers.CharField(),
+                },
+            )
+        },
+    )
+    def get(self, request):
+        setting = SiteSetting.objects.filter(clave='INSTITUTION_HERO').first()
+        data = dict(setting.valor) if setting and isinstance(setting.valor, dict) else {}
+        resp_data = {
+            'clave': 'INSTITUTION_HERO',
+            'image_url': data.get('image_url') or data.get('url') or '',
+            'url': data.get('url') or data.get('image_url') or '',
+            'relative_url': data.get('relative_url') or '',
+            'api_media_url': data.get('api_media_url') or '',
+            'alt_text': data.get('alt_text') or 'Fotografía principal de la Fundación PLUS',
+            'version': str(data.get('version') or ''),
+            'updated_at': data.get('updated_at') or (setting.fecha_actualizacion.isoformat() if setting else None),
+            'corporation_name': data.get('corporation_name') or 'Corporación Pluralismo Social',
+            'acronym': data.get('acronym') or 'PLUS',
+        }
+        return Response(resp_data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary='Reemplazar la fotografía principal del home (Hero) (Exclusivo Superadministrador)',
+        responses={
+            200: inline_serializer(
+                name='HomeHeroUpdateResponse',
+                fields={
+                    'clave': drf_serializers.CharField(),
+                    'image_url': drf_serializers.CharField(),
+                    'url': drf_serializers.CharField(),
+                    'relative_url': drf_serializers.CharField(),
+                    'api_media_url': drf_serializers.CharField(),
+                    'alt_text': drf_serializers.CharField(),
+                    'version': drf_serializers.CharField(),
+                    'updated_at': drf_serializers.CharField(),
+                },
+            )
+        },
+    )
+    def put(self, request):
+        return self._handle_update(request)
+
+    def post(self, request):
+        return self._handle_update(request)
+
+    def _handle_update(self, request):
+        uploaded_file = (
+            request.FILES.get('image')
+            or request.FILES.get('imagen')
+            or request.FILES.get('file')
+            or request.FILES.get('hero_image')
+        )
+        alt_text = (
+            request.data.get('alt_text')
+            or request.data.get('texto_alternativo')
+            or request.data.get('descripcion')
+        )
+
+        setting, _ = SiteSetting.objects.get_or_create(
+            clave='INSTITUTION_HERO',
+            defaults={'valor': {}},
+        )
+        previous_data = dict(setting.valor) if isinstance(setting.valor, dict) else {}
+
+        if not uploaded_file and alt_text is None:
+            return Response(
+                {'detail': 'Debe proporcionar una imagen ("image") o un texto alternativo ("alt_text").'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        new_data = dict(previous_data)
+        now_ts = int(timezone.now().timestamp())
+        now_iso = timezone.now().isoformat()
+
+        if uploaded_file:
+            # Validar con validate_home_hero_image (extensión, tamaño <= 5MB y magic bytes)
+            validate_home_hero_image(uploaded_file, max_size_mb=5)
+
+            ext = os.path.splitext(uploaded_file.name)[1].lower()
+            if not ext:
+                ext = '.jpg'
+            file_name = f'home_hero_{now_ts}_{uuid.uuid4().hex[:6]}{ext}'
+            storage_path = f'site/hero/{file_name}'
+
+            saved_path = default_storage.save(storage_path, uploaded_file)
+            clean_path = saved_path.replace('\\', '/').lstrip('/')
+
+            versioned_relative = f'/media/{clean_path}?v={now_ts}'
+            versioned_absolute = request.build_absolute_uri(versioned_relative)
+            api_media_url = request.build_absolute_uri(f'/api/v1/public/media/{clean_path}?v={now_ts}')
+
+            new_data['image_url'] = versioned_absolute
+            new_data['url'] = versioned_absolute
+            new_data['relative_url'] = versioned_relative
+            new_data['api_media_url'] = api_media_url
+            new_data['storage_path'] = clean_path
+            new_data['version'] = str(now_ts)
+
+        if alt_text is not None:
+            new_data['alt_text'] = str(alt_text).strip()
+        elif 'alt_text' not in new_data:
+            new_data['alt_text'] = 'Fotografía principal de la Fundación PLUS'
+
+        new_data['updated_at'] = now_iso
+        if 'corporation_name' not in new_data:
+            new_data['corporation_name'] = 'Corporación Pluralismo Social'
+        if 'acronym' not in new_data:
+            new_data['acronym'] = 'PLUS'
+
+        # Persistir cambio
+        setting.valor = new_data
+        setting.save()
+
+        # Registrar auditoría
+        AuditService.set_db_actor_session(request.user)
+        AuditService.log(
+            actor=request.user,
+            action='update',
+            module='configuracion_sitio',
+            target_model='configuracion_plataforma',
+            target_id=setting.pk,
+            description='Actualización de la fotografía principal de inicio (Hero Image) por superadministrador',
+            previous_data=previous_data,
+            new_data=new_data,
+            request=request,
+        )
+
+        response_payload = {
+            'clave': 'INSTITUTION_HERO',
+            'image_url': new_data.get('image_url') or new_data.get('url'),
+            'url': new_data.get('url'),
+            'relative_url': new_data.get('relative_url'),
+            'api_media_url': new_data.get('api_media_url'),
+            'alt_text': new_data.get('alt_text'),
+            'version': str(new_data.get('version', now_ts)),
+            'updated_at': new_data.get('updated_at'),
+            'corporation_name': new_data.get('corporation_name'),
+            'acronym': new_data.get('acronym'),
+        }
+        return Response(response_payload, status=status.HTTP_200_OK)

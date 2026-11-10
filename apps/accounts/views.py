@@ -668,6 +668,9 @@ class AdminUserViewSet(viewsets.ModelViewSet):
                         asignaciones_ambito__tipo_caso_id=case.tipo_caso_id,
                     )
                 ).distinct()
+            else:
+                # P10: Si el caso no existe, no devolver todos los usuarios sino conjunto vacío
+                qs = qs.none()
         return qs
 
     def perform_create(self, serializer):

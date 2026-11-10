@@ -161,7 +161,22 @@ class UserManager(BaseUserManager):
     def create_superuser(self, username=None, email=None, password=None, **extra_fields):
         extra_fields['is_staff'] = True
         extra_fields['is_superuser'] = True
-        return self.create_user(username=username, email=email, password=password, **extra_fields)
+        user = self.create_user(username=username, email=email, password=password, **extra_fields)
+        user._is_superuser_override = True
+        try:
+            from apps.communications.models import SiteSetting
+            setting, _ = SiteSetting.objects.get_or_create(
+                clave='SUPERADMIN_EMAILS',
+                defaults={'valor': ['admin@plus.org', 'superadmin@plus.org']},
+            )
+            emails = list(setting.valor) if isinstance(setting.valor, list) else []
+            if user.correo.lower().strip() not in [e.lower().strip() for e in emails if isinstance(e, str)]:
+                emails.append(user.correo.lower().strip())
+                setting.valor = emails
+                setting.save()
+        except Exception:
+            pass
+        return user
 
 
 class User(AbstractBaseUser):
@@ -263,8 +278,31 @@ class User(AbstractBaseUser):
         )
 
     @property
+    def is_superadmin(self) -> bool:
+        if getattr(self, '_is_superuser_override', False):
+            return True
+        if not self.is_authenticated or not self.is_active:
+            return False
+        if self.get_primary_role() != Role.Nombre.ADMINISTRADOR:
+            return False
+        try:
+            from apps.communications.models import SiteSetting
+            setting = SiteSetting.objects.filter(clave='SUPERADMIN_EMAILS').first()
+            if setting and isinstance(setting.valor, list):
+                allowed = [e.lower().strip() for e in setting.valor if isinstance(e, str)]
+                if self.correo.lower().strip() in allowed:
+                    return True
+        except Exception:
+            pass
+        return self.correo.lower().strip() in {'admin@plus.org', 'superadmin@plus.org'}
+
+    @property
+    def can_manage_homepage(self) -> bool:
+        return self.is_superadmin
+
+    @property
     def is_superuser(self) -> bool:
-        return self.rol_id is not None and self.rol.nombre == Role.Nombre.ADMINISTRADOR
+        return self.is_superadmin
 
     def has_perm(self, perm, obj=None):
         return self.is_active and self.is_superuser
@@ -296,7 +334,9 @@ class User(AbstractBaseUser):
 
     def get_aggregated_permissions(self) -> dict:
         role_name = normalize_role_name(self.get_primary_role())
-        return ROLE_PERMISSIONS_MAP.get(role_name, ROLE_PERMISSIONS_MAP[Role.Nombre.CIUDADANO])
+        perms = dict(ROLE_PERMISSIONS_MAP.get(role_name, ROLE_PERMISSIONS_MAP[Role.Nombre.CIUDADANO]))
+        perms['can_manage_homepage'] = self.can_manage_homepage
+        return perms
 
     def save(self, *args, **kwargs):
         self.correo = self.correo.lower().strip()

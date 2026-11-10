@@ -68,3 +68,43 @@ def validate_file_safety(uploaded_file):
         raise ValidationError(
             f'El archivo supera el tamaño máximo permitido de {MAX_UPLOAD_SIZE_MB} MB.'
         )
+
+
+def validate_home_hero_image(uploaded_file, max_size_mb: int = 5):
+    """
+    Valida que el archivo subido sea una imagen real en formato JPG, PNG o WEBP
+    con tamaño menor o igual a max_size_mb (5 MB por defecto).
+    Comprueba tanto la extensión como los magic bytes del contenido real.
+    """
+    if not uploaded_file:
+        raise ValidationError('Debe proporcionar un archivo de imagen en el campo "image" o "imagen".')
+
+    name = getattr(uploaded_file, 'name', '') or ''
+    ext = os.path.splitext(name)[1].lower()
+    allowed_extensions = {'.jpg', '.jpeg', '.png', '.webp'}
+    if ext not in allowed_extensions:
+        raise ValidationError(
+            f'Extensión "{ext}" no permitida para la fotografía de portada. Solo se permiten imágenes JPG, PNG o WEBP.'
+        )
+
+    max_bytes = max_size_mb * 1024 * 1024
+    file_size = getattr(uploaded_file, 'size', 0)
+    if file_size > max_bytes:
+        raise ValidationError(
+            f'El archivo supera el límite acordado de {max_size_mb} MB (tamaño recibido: {file_size} bytes).'
+        )
+
+    # Validar magic bytes leyendo los primeros 16 bytes
+    initial_pos = uploaded_file.tell() if hasattr(uploaded_file, 'tell') else 0
+    header = uploaded_file.read(16)
+    if hasattr(uploaded_file, 'seek'):
+        uploaded_file.seek(initial_pos)
+
+    is_jpeg = header.startswith(b'\xff\xd8\xff')
+    is_png = header.startswith(b'\x89PNG\r\n\x1a\n')
+    is_webp = header.startswith(b'RIFF') and len(header) >= 12 and header[8:12] == b'WEBP'
+
+    if not (is_jpeg or is_png or is_webp):
+        raise ValidationError(
+            'El contenido binario del archivo no corresponde a una imagen válida en formato JPG, PNG o WEBP.'
+        )

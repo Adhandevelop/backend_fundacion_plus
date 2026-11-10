@@ -90,8 +90,12 @@ class CaseService:
         validated_data.pop('acepta_tratamiento_datos', None)
         validated_data.pop('accepts_data_policy', None)
 
-        lat = validated_data.pop('latitud', None) or validated_data.pop('exact_latitude', None)
-        lon = validated_data.pop('longitud', None) or validated_data.pop('exact_longitude', None)
+        lat = validated_data.pop('latitud', None)
+        if lat is None:
+            lat = validated_data.pop('exact_latitude', None)
+        lon = validated_data.pop('longitud', None)
+        if lon is None:
+            lon = validated_data.pop('exact_longitude', None)
         ubicacion = validated_data.pop('ubicacion', None)
         if ubicacion is None and lat is not None and lon is not None:
             ubicacion = make_geojson_point(lon, lat)
@@ -102,6 +106,40 @@ class CaseService:
             ubicacion=ubicacion,
             **validated_data,
         )
+
+        # P06: Procesar anexos iniciales si se envían en la petición multipart/form-data
+        if request and getattr(request, 'FILES', None):
+            from django.core.files.storage import default_storage
+            import os
+            tipo_map = {
+                '.jpg': CaseEvidence.TipoArchivo.IMAGEN,
+                '.jpeg': CaseEvidence.TipoArchivo.IMAGEN,
+                '.png': CaseEvidence.TipoArchivo.IMAGEN,
+                '.webp': CaseEvidence.TipoArchivo.IMAGEN,
+                '.mp4': CaseEvidence.TipoArchivo.VIDEO,
+                '.mp3': CaseEvidence.TipoArchivo.AUDIO,
+                '.pdf': CaseEvidence.TipoArchivo.DOCUMENTO,
+            }
+            files = request.FILES.getlist('files') or request.FILES.getlist('archivos')
+            if not files:
+                single = request.FILES.get('file') or request.FILES.get('archivo')
+                if single:
+                    files = [single]
+            for f in files:
+                ext = os.path.splitext(f.name)[1].lower()
+                saved_path = default_storage.save(f'cases/{case.codigo}/evidence/{f.name}', f)
+                CaseEvidence.objects.create(
+                    caso=case,
+                    usuario=reporter,
+                    tipo_archivo=tipo_map.get(ext, CaseEvidence.TipoArchivo.DOCUMENTO),
+                    ruta_archivo=default_storage.url(saved_path),
+                    descripcion=f'Evidencia inicial al radicar caso ({f.name})',
+                    audiencia=CaseEvidence.Audiencia.CIUDADANO,
+                    estado_revision=CaseEvidence.EstadoRevision.PENDIENTE,
+                    nombre_original=f.name[:255],
+                    mime_type=getattr(f, 'content_type', None),
+                    tamano_bytes=getattr(f, 'size', None),
+                )
 
         # Registrar aceptación legal de radicación (AMP-09)
         LegalAcceptance.record(

@@ -11,7 +11,7 @@ class IsCitizen(BasePermission):
 
 
 class IsClientOnly(BasePermission):
-    """Permiso compatible con endpoint legacy /api/clientes/me/ (solo rol ciudadano)."""
+    """Permiso exclusivo para el rol ciudadano (P01: endpoints exclusivamente ciudadanos)."""
 
     def has_permission(self, request, view):
         user = request.user
@@ -21,6 +21,9 @@ class IsClientOnly(BasePermission):
             and user.is_active
             and user.get_primary_role() == Role.Nombre.CIUDADANO
         )
+
+
+IsCitizenOnly = IsClientOnly
 
 
 class IsResponsibleOrAdmin(BasePermission):
@@ -106,6 +109,19 @@ IsAdminUser = IsAdminOrSuperAdmin
 IsAdminOnly = IsAdminOrSuperAdmin
 
 
-class IsSuperAdmin(IsAdminOrSuperAdmin):
-    """Permite acceso exclusivamente al rol administrador general de PLUS."""
-    pass
+class IsSuperAdmin(BasePermission):
+    """
+    Permite acceso exclusivamente a cuentas con capacidad de superadministrador de PLUS
+    (rol administrador y privilegio persistente can_manage_homepage).
+    Los administradores estándar reciben 403 Forbidden.
+    """
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and user.is_active
+            and user.get_primary_role() == Role.Nombre.ADMINISTRADOR
+            and getattr(user, 'can_manage_homepage', False)
+        )

@@ -165,8 +165,15 @@ class PublicHomeSummaryView(APIView):
             ),
         }
 
+        hero_setting = settings_map.get('INSTITUTION_HERO')
+        institution_data = dict(default_institution)
+        if isinstance(hero_setting, dict):
+            institution_data.update(hero_setting)
+        elif isinstance(hero_setting, str):
+            institution_data['image_url'] = hero_setting
+
         return Response({
-            'institution': settings_map.get('INSTITUTION_HERO', default_institution),
+            'institution': institution_data,
             'verified_indicators': {
                 'published_cases_count': approved_cases.count(),
                 'resolved_cases_count': approved_cases.filter(

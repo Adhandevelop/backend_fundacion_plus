@@ -5,13 +5,15 @@ from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.cache import cache
 from django.core.exceptions import PermissionDenied
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import Role, User
-from apps.audit.models import AuditAccess, AuditPermission
+from apps.audit.models import AuditAccess, AuditLog, AuditPermission
+from apps.communications.models import SiteSetting
 
 
 class AuthAndRBACTests(APITestCase):
@@ -406,3 +408,222 @@ class AuthAndRBACTests(APITestCase):
         self.assertEqual(new_login.status_code, status.HTTP_200_OK)
         self.assertEqual(new_login.data['primary_role'], Role.Nombre.REPRESENTANTE)
         self.assertIn('representante', new_login.data['roles'])
+
+
+class SuperadminHomeHeroTests(APITestCase):
+    """
+    Pruebas integrales para la gestión exclusiva de la fotografía principal de inicio (Hero Image):
+    - Distinción entre superadministrador y administrador normal.
+    - Exposición de can_manage_homepage en /me/ y permissions.
+    - Acceso a GET /api/v1/admin/site/home-hero/.
+    - Reemplazo mediante PUT /api/v1/admin/site/home-hero/ con validación binaria (<= 5MB, JPG/PNG/WEBP).
+    - 403 Forbidden para administradores normales, moderadores, representantes y ciudadanos.
+    - Validación y conservación de la imagen anterior en caso de fallo.
+    - Registro de auditoría (AuditLog).
+    - Disponibilidad pública en /api/v1/public/site/ y /api/v1/public/home/.
+    """
+
+    def setUp(self):
+        # Rol administrador y ciudadano
+        self.admin_role, _ = Role.objects.get_or_create(nombre=Role.Nombre.ADMINISTRADOR)
+        self.citizen_role, _ = Role.objects.get_or_create(nombre=Role.Nombre.CIUDADANO)
+
+        # Superadministrador (email admin@plus.org registrado en SUPERADMIN_EMAILS)
+        self.superadmin = User.objects.create_user(
+            username='superadmin',
+            email='admin@plus.org',
+            password='SuperPassword123!',
+            rol=self.admin_role,
+            is_staff=True,
+        )
+
+        # Administrador general/normal (no está en SUPERADMIN_EMAILS)
+        self.normal_admin = User.objects.create_user(
+            username='admin_normal',
+            email='gestor_general@plus.org',
+            password='NormalAdmin123!',
+            rol=self.admin_role,
+            is_staff=True,
+        )
+
+        # Ciudadano
+        self.ciudadano = User.objects.create_user(
+            username='ciudadano_test',
+            email='vecino@plus.org',
+            password='Ciudadano123!',
+            rol=self.citizen_role,
+        )
+
+        # Configuración inicial de Hero
+        self.hero_setting, _ = SiteSetting.objects.get_or_create(
+            clave='INSTITUTION_HERO',
+            defaults={
+                'valor': {
+                    'image_url': '/media/site/hero/initial.jpg?v=1',
+                    'alt_text': 'Fotografía inicial de la sede PLUS',
+                    'version': '1',
+                }
+            },
+        )
+
+    def test_can_manage_homepage_exposed_in_me_and_permissions(self):
+        # Superadministrador
+        self.client.force_authenticate(user=self.superadmin)
+        res_super = self.client.get('/api/v1/me/')
+        self.assertEqual(res_super.status_code, status.HTTP_200_OK)
+        self.assertTrue(res_super.data.get('can_manage_homepage'))
+        self.assertTrue(res_super.data['permissions'].get('can_manage_homepage'))
+
+        # Administrador normal
+        self.client.force_authenticate(user=self.normal_admin)
+        res_normal = self.client.get('/api/v1/me/')
+        self.assertEqual(res_normal.status_code, status.HTTP_200_OK)
+        self.assertFalse(res_normal.data.get('can_manage_homepage'))
+        self.assertFalse(res_normal.data['permissions'].get('can_manage_homepage'))
+
+        # Ciudadano
+        self.client.force_authenticate(user=self.ciudadano)
+        res_ciu = self.client.get('/api/v1/me/')
+        self.assertEqual(res_ciu.status_code, status.HTTP_200_OK)
+        self.assertFalse(res_ciu.data.get('can_manage_homepage'))
+        self.assertFalse(res_ciu.data['permissions'].get('can_manage_homepage'))
+
+    def test_superadmin_can_get_and_put_home_hero_with_audit_and_versioning(self):
+        self.client.force_authenticate(user=self.superadmin)
+
+        # GET hero actual
+        get_res = self.client.get('/api/v1/admin/site/home-hero/')
+        self.assertEqual(get_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(get_res.data['alt_text'], 'Fotografía inicial de la sede PLUS')
+
+        # PUT nueva imagen JPEG válida con magic bytes
+        valid_jpeg_content = b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00' + b'A' * 200
+        image_file = SimpleUploadedFile('nuevo_hero.jpg', valid_jpeg_content, content_type='image/jpeg')
+
+        put_res = self.client.put(
+            '/api/v1/admin/site/home-hero/',
+            {
+                'image': image_file,
+                'alt_text': 'Comunidad Unida de Villavicencio y Meta',
+            },
+            format='multipart',
+        )
+        self.assertEqual(put_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(put_res.data['alt_text'], 'Comunidad Unida de Villavicencio y Meta')
+        self.assertIn('?v=', put_res.data['image_url'])
+        self.assertIn('/media/site/hero/', put_res.data['image_url'])
+
+        # Verificar auditoría
+        audit_entry = AuditLog.objects.filter(
+            modulo='configuracion_sitio',
+            accion='update',
+            usuario=self.superadmin,
+        ).first()
+        self.assertIsNotNone(audit_entry)
+        self.assertEqual(audit_entry.modulo, 'configuracion_sitio')
+        self.assertIn('Hero Image', audit_entry.datos_nuevos.get('descripcion', ''))
+
+    def test_normal_admin_and_other_roles_forbidden(self):
+        valid_jpeg_content = b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00' + b'A' * 200
+
+        # Normal admin recibe 403 Forbidden en GET y PUT
+        self.client.force_authenticate(user=self.normal_admin)
+        res_get_normal = self.client.get('/api/v1/admin/site/home-hero/')
+        self.assertEqual(res_get_normal.status_code, status.HTTP_403_FORBIDDEN)
+
+        image_file = SimpleUploadedFile('intruso.jpg', valid_jpeg_content, content_type='image/jpeg')
+        res_put_normal = self.client.put(
+            '/api/v1/admin/site/home-hero/',
+            {'image': image_file, 'alt_text': 'Intento no autorizado'},
+            format='multipart',
+        )
+        self.assertEqual(res_put_normal.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Ciudadano recibe 403 Forbidden
+        self.client.force_authenticate(user=self.ciudadano)
+        image_file2 = SimpleUploadedFile('intruso2.jpg', valid_jpeg_content, content_type='image/jpeg')
+        res_put_ciu = self.client.put(
+            '/api/v1/admin/site/home-hero/',
+            {'image': image_file2, 'alt_text': 'Intento ciudadano'},
+            format='multipart',
+        )
+        self.assertEqual(res_put_ciu.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Sin autenticación recibe 401 Unauthorized
+        self.client.credentials()
+        self.client.logout()
+        res_anon = self.client.get('/api/v1/admin/site/home-hero/')
+        self.assertEqual(res_anon.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_invalid_file_rejected_and_previous_image_preserved(self):
+        self.client.force_authenticate(user=self.superadmin)
+
+        # Archivo con extensión permitida pero contenido inválido (sin magic bytes)
+        fake_image = SimpleUploadedFile('malicioso.jpg', b'ESTO NO ES UN JPEG BINARIO VALIDO', content_type='image/jpeg')
+        res = self.client.put(
+            '/api/v1/admin/site/home-hero/',
+            {'image': fake_image, 'alt_text': 'Texto fallido'},
+            format='multipart',
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # La imagen anterior debe conservarse intacta
+        self.hero_setting.refresh_from_db()
+        self.assertEqual(self.hero_setting.valor['alt_text'], 'Fotografía inicial de la sede PLUS')
+
+    def test_oversized_file_rejected(self):
+        self.client.force_authenticate(user=self.superadmin)
+
+        # Archivo mayor a 5 MB (5.1 MB con magic bytes JPEG)
+        oversized = SimpleUploadedFile(
+            'pesada.jpg',
+            b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00' + (b'0' * (5 * 1024 * 1024 + 100)),
+            content_type='image/jpeg',
+        )
+        res = self.client.put(
+            '/api/v1/admin/site/home-hero/',
+            {'image': oversized, 'alt_text': 'Foto gigante'},
+            format='multipart',
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('límite acordado de 5 MB', str(res.data))
+
+    def test_normal_admin_cannot_bypass_via_admin_site_settings(self):
+        self.client.force_authenticate(user=self.normal_admin)
+
+        # Intento de modificar INSTITUTION_HERO a través de /api/v1/admin/settings/{id}/
+        res = self.client.patch(
+            f'/api/v1/admin/settings/{self.hero_setting.pk}/',
+            {'valor': {'image_url': '/hacked.jpg', 'alt_text': 'Bypassed'}},
+            format='json',
+        )
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_public_endpoints_reflect_hero_image(self):
+        # 1. Configurar un hero oficial con superadmin
+        self.client.force_authenticate(user=self.superadmin)
+        valid_png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + b'B' * 100
+        image_file = SimpleUploadedFile('portada_oficial.png', valid_png, content_type='image/png')
+        self.client.put(
+            '/api/v1/admin/site/home-hero/',
+            {'image': image_file, 'alt_text': 'Sede Principal Villavicencio Meta'},
+            format='multipart',
+        )
+
+        # 2. Consulta pública anónima de /api/v1/public/site/
+        self.client.credentials()
+        self.client.logout()
+
+        pub_site_res = self.client.get('/api/v1/public/site/')
+        self.assertEqual(pub_site_res.status_code, status.HTTP_200_OK)
+        site_hero = pub_site_res.data['configuracion']['INSTITUTION_HERO']
+        self.assertEqual(site_hero['alt_text'], 'Sede Principal Villavicencio Meta')
+        self.assertIn('?v=', site_hero['image_url'])
+
+        # 3. Consulta pública anónima de /api/v1/public/home/
+        pub_home_res = self.client.get('/api/v1/public/home/')
+        self.assertEqual(pub_home_res.status_code, status.HTTP_200_OK)
+        inst_data = pub_home_res.data['institution']
+        self.assertEqual(inst_data['alt_text'], 'Sede Principal Villavicencio Meta')
+        self.assertIn('?v=', inst_data['image_url'])
+
