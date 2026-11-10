@@ -66,19 +66,19 @@ class CasesMapAndPlatformIntegrationTests(APITestCase):
         CaseStatus.get_by_name('resuelto')
         CaseStatus.get_by_name('cerrado')
 
-        # Territorios (sección 01 de base de datos.md)
+        # Territorios (sección 01 de base de datos.md) - Meta y Villavicencio
         self.department = Department.objects.create(
-            codigo_dane='76',
-            nombre='Valle del Cauca',
+            codigo_dane='50',
+            nombre='Meta',
         )
         self.municipality = Municipality.objects.create(
             departamento=self.department,
-            codigo_dane='76001',
-            nombre='Cali',
+            codigo_dane='50001',
+            nombre='Villavicencio',
         )
         self.community = Community.objects.create(
             municipio=self.municipality,
-            nombre='Vereda El Saladito',
+            nombre='Vereda Vanguardia',
             tipo=Community.TipoComunidad.VEREDA,
             activo=True,
         )
