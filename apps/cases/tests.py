@@ -653,3 +653,161 @@ class CasesMapAndPlatformIntegrationTests(APITestCase):
         cand_alias_ids = [str(c['id']) for c in results_cand_alias]
         self.assertNotIn(str(caso_1.id), cand_alias_ids)
         self.assertIn(str(caso_2.id), cand_alias_ids)
+
+    def test_p23_initiative_activity_eligible_responsibles_and_geopoint(self):
+        """
+        P23:
+        - Selector de responsables elegibles: GET /api/v1/admin/initiative-activities/eligible-responsibles/
+        - Excluye ciudadanos y usuarios inactivos; retorna administradores, representantes y moderadores.
+        - Validación de responsable en InitiativeActivity: rechaza ciudadanos (400), acepta roles institucionales.
+        - DTO de coordenadas PostGIS Point SRID 4326:
+          * Acepta GeoJSON {"type": "Point", "coordinates": [-76.53, 3.45], "srid": 4326}
+          * Acepta {"lat": 3.45, "lng": -76.53}
+          * Acepta campos directos latitud/longitud
+          * Rechaza SRID diferente de 4326 con 400
+          * Rechaza coordenadas fuera de Colombia con 400
+          * Lectura retorna formato GeoJSON estándar con srid 4326
+        """
+        self.client.force_authenticate(user=self.admin)
+
+        # 1. Selector de responsables elegibles
+        resp_res = self.client.get('/api/v1/admin/initiative-activities/eligible-responsibles/')
+        self.assertEqual(resp_res.status_code, status.HTTP_200_OK)
+        users_list = resp_res.data.get('results', resp_res.data)
+        user_ids = [str(u['id']) for u in users_list]
+        self.assertIn(str(self.admin.id), user_ids)
+        self.assertIn(str(self.responsible.id), user_ids)
+        self.assertNotIn(str(self.citizen.id), user_ids)
+        self.assertNotIn(str(self.other_citizen.id), user_ids)
+
+        # Filtro por rol
+        rep_filter = self.client.get('/api/v1/admin/initiative-activities/eligible-responsibles/?rol=representante')
+        self.assertEqual(rep_filter.status_code, status.HTTP_200_OK)
+        rep_results = rep_filter.data.get('results', rep_filter.data)
+        self.assertTrue(all(u['rol_nombre'] == 'representante' for u in rep_results))
+
+        # Alias en /initiatives/
+        ini_resp_res = self.client.get('/api/v1/admin/initiatives/eligible-responsibles/')
+        self.assertEqual(ini_resp_res.status_code, status.HTTP_200_OK)
+
+        # Preparar iniciativa y edición
+        init_resp = self.client.post(
+            '/api/v1/admin/initiatives/',
+            {
+                'titulo': 'Iniciativa Actividades P23',
+                'subtitulo': 'Subtítulo',
+                'descripcion_corta': 'Corta',
+                'descripcion': 'Larga',
+                'categoria': 'Comunitaria',
+                'estado': 'en_curso',
+                'estado_publicacion': 'publicada',
+            },
+            format='json',
+        )
+        self.assertEqual(init_resp.status_code, status.HTTP_201_CREATED)
+        initiative = Initiative.objects.get(pk=init_resp.data['id'])
+        edicion = initiative.get_or_create_current_edition()
+
+        # 2. Validación de responsable: rechazar ciudadano
+        bad_act_resp = self.client.post(
+            '/api/v1/admin/initiative-activities/',
+            {
+                'edicion': str(edicion.id),
+                'responsable': str(self.citizen.id),
+                'titulo': 'Actividad no autorizada',
+                'fecha_inicio': '2026-11-20T10:00:00Z',
+            },
+            format='json',
+        )
+        self.assertEqual(bad_act_resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('responsable', bad_act_resp.data.get('errors', bad_act_resp.data))
+
+        # 3. GeoPoint: rechazar SRID inválido
+        srid_err_resp = self.client.post(
+            '/api/v1/admin/initiative-activities/',
+            {
+                'edicion': str(edicion.id),
+                'responsable': str(self.responsible.id),
+                'titulo': 'Actividad SRID Inválido',
+                'fecha_inicio': '2026-11-20T10:00:00Z',
+                'ubicacion': {
+                    'type': 'Point',
+                    'srid': 3857,
+                    'coordinates': [-76.53, 3.45],
+                },
+            },
+            format='json',
+        )
+        self.assertEqual(srid_err_resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('ubicacion', srid_err_resp.data.get('errors', srid_err_resp.data))
+
+        # 4. GeoPoint: rechazar coordenadas fuera de Colombia
+        bounds_err_resp = self.client.post(
+            '/api/v1/admin/initiative-activities/',
+            {
+                'edicion': str(edicion.id),
+                'responsable': str(self.responsible.id),
+                'titulo': 'Actividad Fuera de Colombia',
+                'fecha_inicio': '2026-11-20T10:00:00Z',
+                'ubicacion': {
+                    'type': 'Point',
+                    'srid': 4326,
+                    'coordinates': [2.35, 48.85],  # París
+                },
+            },
+            format='json',
+        )
+        self.assertEqual(bounds_err_resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('ubicacion', bounds_err_resp.data.get('errors', bounds_err_resp.data))
+
+        # 5. Creación exitosa con GeoJSON Point SRID 4326
+        ok_act_1 = self.client.post(
+            '/api/v1/admin/initiative-activities/',
+            {
+                'edicion': str(edicion.id),
+                'responsable': str(self.responsible.id),
+                'titulo': 'Taller de Huertas Comunitarias',
+                'descripcion': 'Taller práctico de siembra y compostaje.',
+                'fecha_inicio': '2026-11-25T09:00:00Z',
+                'lugar': 'Kiosko Comunal',
+                'ubicacion': {
+                    'type': 'Point',
+                    'srid': 4326,
+                    'coordinates': [-76.5320, 3.4510],
+                },
+            },
+            format='json',
+        )
+        self.assertEqual(ok_act_1.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(ok_act_1.data['responsable_nombre'], self.responsible.full_name)
+        self.assertIsNotNone(ok_act_1.data['ubicacion'])
+        self.assertEqual(ok_act_1.data['ubicacion']['type'], 'Point')
+        self.assertEqual(ok_act_1.data['ubicacion']['srid'], 4326)
+        self.assertAlmostEqual(ok_act_1.data['ubicacion']['coordinates'][0], -76.5320, places=3)
+        self.assertAlmostEqual(ok_act_1.data['ubicacion']['coordinates'][1], 3.4510, places=3)
+
+        # 6. Creación exitosa con DTO {'lat': ..., 'lng': ...}
+        ok_act_2 = self.client.post(
+            '/api/v1/admin/initiative-activities/',
+            {
+                'edicion': str(edicion.id),
+                'id_responsable': str(self.admin.id),
+                'titulo': 'Feria Gastronómica Campesina',
+                'fecha_inicio': '2026-11-26T10:00:00Z',
+                'ubicacion': {
+                    'lat': 3.4600,
+                    'lng': -76.5200,
+                },
+            },
+            format='json',
+        )
+        self.assertEqual(ok_act_2.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(ok_act_2.data['ubicacion']['type'], 'Point')
+        self.assertAlmostEqual(ok_act_2.data['ubicacion']['coordinates'][0], -76.5200, places=3)
+        self.assertAlmostEqual(ok_act_2.data['ubicacion']['coordinates'][1], 3.4600, places=3)
+
+        # 7. Filtro server-side por edición en GET /initiative-activities/?edicion=
+        filter_resp = self.client.get(f'/api/v1/admin/initiative-activities/?edicion={edicion.id}')
+        self.assertEqual(filter_resp.status_code, status.HTTP_200_OK)
+        act_results = filter_resp.data.get('results', filter_resp.data)
+        self.assertGreaterEqual(len(act_results), 2)

@@ -1,8 +1,11 @@
 import os
 import re
 import uuid
+from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
 from rest_framework import serializers
+from apps.accounts.models import Role
+from core.gis import GeoPointField, make_geojson_point
 from apps.initiatives.models import (
     Initiative,
     InitiativeActivity,
@@ -157,10 +160,49 @@ class InitiativeMediaSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
+class EligibleResponsibleSerializer(serializers.ModelSerializer):
+    """
+    DTO para selección de usuarios institucionales elegibles como responsables de actividades.
+    Filtra administradores, representantes y moderadores activos.
+    """
+    id_usuario = serializers.UUIDField(source='id', read_only=True)
+    nombre_completo = serializers.CharField(source='full_name', read_only=True)
+    rol_nombre = serializers.CharField(source='rol.nombre', read_only=True)
+    rol_codigo = serializers.CharField(source='rol.nombre', read_only=True)
+
+    class Meta:
+        model = get_user_model()
+        fields = [
+            'id',
+            'id_usuario',
+            'correo',
+            'email',
+            'nombres',
+            'apellidos',
+            'nombre_completo',
+            'rol',
+            'rol_nombre',
+            'rol_codigo',
+            'telefono',
+            'estado',
+        ]
+        read_only_fields = fields
+
+
 class InitiativeActivitySerializer(serializers.ModelSerializer):
     id_actividad = serializers.UUIDField(source='id', read_only=True)
     comunidad_nombre = serializers.CharField(source='comunidad.nombre', read_only=True)
     responsable_nombre = serializers.CharField(source='responsable.full_name', read_only=True)
+    responsable_correo = serializers.CharField(source='responsable.correo', read_only=True)
+    responsable_rol = serializers.CharField(source='responsable.rol.nombre', read_only=True)
+    ubicacion = GeoPointField(required=False, allow_null=True)
+
+    # Campos auxiliares de conveniencia y compatibilidad de escritura
+    latitud = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, write_only=True)
+    longitud = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, write_only=True)
+    latitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, write_only=True)
+    longitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, write_only=True)
+    id_responsable = serializers.UUIDField(required=False, write_only=True)
 
     class Meta:
         model = InitiativeActivity
@@ -169,7 +211,10 @@ class InitiativeActivitySerializer(serializers.ModelSerializer):
             'id_actividad',
             'edicion',
             'responsable',
+            'id_responsable',
             'responsable_nombre',
+            'responsable_correo',
+            'responsable_rol',
             'comunidad',
             'comunidad_nombre',
             'titulo',
@@ -178,10 +223,50 @@ class InitiativeActivitySerializer(serializers.ModelSerializer):
             'fecha_fin',
             'lugar',
             'ubicacion',
+            'latitud',
+            'longitud',
+            'latitude',
+            'longitude',
             'estado',
             'fecha_creacion',
         ]
         read_only_fields = ['id', 'id_actividad', 'fecha_creacion']
+
+    def validate_responsable(self, value):
+        if value is None:
+            return None
+        if not value.is_active or getattr(value, 'estado', 'activo') != 'activo':
+            raise serializers.ValidationError('El usuario seleccionado no se encuentra activo.')
+        allowed_roles = {
+            Role.Nombre.ADMINISTRADOR,
+            Role.Nombre.REPRESENTANTE,
+            Role.Nombre.MODERADOR,
+        }
+        if not value.rol or value.rol.nombre not in allowed_roles:
+            raise serializers.ValidationError(
+                'El responsable debe ser un usuario institucional con rol de administrador, representante o moderador.'
+            )
+        return value
+
+    def validate(self, attrs):
+        # Resolver id_responsable si se pasó
+        if 'id_responsable' in attrs:
+            resp_id = attrs.pop('id_responsable')
+            if resp_id:
+                try:
+                    User = get_user_model()
+                    user = User.objects.get(pk=resp_id)
+                    attrs['responsable'] = self.validate_responsable(user)
+                except User.DoesNotExist:
+                    raise serializers.ValidationError({'id_responsable': 'Usuario responsable no encontrado.'})
+
+        # Resolver latitud/longitud directas si se pasaron y no vino ubicacion
+        lat = attrs.pop('latitud', None) or attrs.pop('latitude', None)
+        lon = attrs.pop('longitud', None) or attrs.pop('longitude', None)
+        if lat is not None and lon is not None and not attrs.get('ubicacion'):
+            attrs['ubicacion'] = GeoPointField().to_internal_value({'coordinates': [lon, lat], 'srid': 4326})
+
+        return super().validate(attrs)
 
 
 class InitiativeCommunitySerializer(serializers.ModelSerializer):

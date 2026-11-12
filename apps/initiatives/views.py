@@ -10,6 +10,8 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from django.contrib.auth import get_user_model
+from apps.accounts.models import Role
 from apps.accounts.permissions import IsEditorOrAdmin
 from apps.audit.services import AuditService
 from apps.cases.models import Case
@@ -25,6 +27,7 @@ from apps.initiatives.models import (
 )
 from apps.initiatives.serializers import (
     AdminInitiativeSerializer,
+    EligibleResponsibleSerializer,
     InitiativeActivitySerializer,
     InitiativeCaseLinkSerializer,
     InitiativeCommunitySerializer,
@@ -286,6 +289,28 @@ class AdminInitiativeViewSet(viewsets.ModelViewSet):
         return Response(AdminInitiativeSerializer(initiative).data)
 
 
+    @extend_schema(
+        summary="Consultar responsables institucionales elegibles para iniciativas y actividades",
+        description="Retorna usuarios activos con roles institucionales (administrador, representante o moderador).",
+        responses={200: EligibleResponsibleSerializer(many=True)},
+    )
+    @action(detail=False, methods=['get'], url_path='eligible-responsibles')
+    def eligible_responsibles(self, request):
+        User = get_user_model()
+        qs = User.objects.filter(
+            estado='activo',
+            rol__nombre__in=[
+                Role.Nombre.ADMINISTRADOR,
+                Role.Nombre.REPRESENTANTE,
+                Role.Nombre.MODERADOR,
+            ],
+        ).select_related('rol').order_by('nombres', 'apellidos')
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            return self.get_paginated_response(EligibleResponsibleSerializer(page, many=True).data)
+        return Response(EligibleResponsibleSerializer(qs, many=True).data)
+
+
 class AdminInitiativeEditionViewSet(viewsets.ModelViewSet):
     queryset = InitiativeEdition.objects.select_related('iniciativa').all()
     serializer_class = InitiativeEditionSerializer
@@ -340,9 +365,130 @@ class AdminInitiativeEditionViewSet(viewsets.ModelViewSet):
 
 
 class AdminInitiativeActivityViewSet(viewsets.ModelViewSet):
-    queryset = InitiativeActivity.objects.select_related('edicion', 'comunidad', 'responsable').all()
+    queryset = InitiativeActivity.objects.select_related(
+        'edicion',
+        'comunidad',
+        'comunidad__municipio',
+        'responsable',
+        'responsable__rol',
+    ).all()
     serializer_class = InitiativeActivitySerializer
     permission_classes = [IsEditorOrAdmin]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        edicion = (
+            self.request.query_params.get('edicion')
+            or self.request.query_params.get('id_edicion')
+            or self.request.query_params.get('edition')
+        )
+        if edicion:
+            try:
+                uuid_val = uuid_lib.UUID(str(edicion).strip())
+                qs = qs.filter(edicion_id=uuid_val)
+            except (ValueError, TypeError):
+                raise ValidationError({'edicion': 'Identificador de edición inválido (debe ser UUID).'})
+
+        responsable = self.request.query_params.get('responsable') or self.request.query_params.get('id_responsable')
+        if responsable:
+            try:
+                uuid_val = uuid_lib.UUID(str(responsable).strip())
+                qs = qs.filter(responsable_id=uuid_val)
+            except (ValueError, TypeError):
+                raise ValidationError({'responsable': 'Identificador de responsable inválido (debe ser UUID).'})
+
+        comunidad = self.request.query_params.get('comunidad') or self.request.query_params.get('id_comunidad')
+        if comunidad:
+            try:
+                uuid_val = uuid_lib.UUID(str(comunidad).strip())
+                qs = qs.filter(comunidad_id=uuid_val)
+            except (ValueError, TypeError):
+                qs = qs.filter(comunidad__nombre__icontains=comunidad)
+
+        estado = self.request.query_params.get('estado')
+        if estado:
+            qs = qs.filter(estado=estado)
+
+        search = self.request.query_params.get('search') or self.request.query_params.get('q')
+        if search:
+            qs = qs.filter(
+                Q(titulo__icontains=search)
+                | Q(descripcion__icontains=search)
+                | Q(lugar__icontains=search)
+            )
+
+        return qs
+
+    @extend_schema(
+        summary="Listar actividades de iniciativas",
+        description=(
+            "Permite listar actividades vinculadas a ediciones de iniciativas. "
+            "Soporta filtros server-side por edición (?edicion={uuid}), responsable (?responsable={uuid}), "
+            "comunidad (?comunidad={uuid}), estado (?estado=...) y búsqueda por texto (?search=)."
+        ),
+        parameters=[
+            OpenApiParameter('edicion', OpenApiTypes.UUID, OpenApiParameter.QUERY, required=False, description='Filtrar por UUID de la edición (soporta alias id_edicion, edition).'),
+            OpenApiParameter('responsable', OpenApiTypes.UUID, OpenApiParameter.QUERY, required=False, description='Filtrar por UUID del usuario responsable.'),
+            OpenApiParameter('comunidad', OpenApiTypes.UUID, OpenApiParameter.QUERY, required=False, description='Filtrar por UUID de la comunidad.'),
+            OpenApiParameter('estado', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False, description='Filtrar por estado: programada, realizada, cancelada.'),
+            OpenApiParameter('search', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False, description='Búsqueda por título, descripción o lugar de la actividad.'),
+        ],
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @extend_schema(
+        summary="Consultar catálogo de responsables institucionales elegibles para actividades",
+        description=(
+            "Retorna usuarios activos con roles institucionales (administrador, representante o moderador) "
+            "que pueden ser asignados como responsables en una actividad de iniciativa. "
+            "Accesible bajo permiso IsEditorOrAdmin. Soporta búsqueda textual (?search=) y filtro por rol (?rol=)."
+        ),
+        parameters=[
+            OpenApiParameter('search', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False, description='Búsqueda por nombre, apellido, correo o documento del responsable.'),
+            OpenApiParameter('rol', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False, description='Filtrar por nombre de rol: administrador, representante o moderador.'),
+        ],
+        responses={200: EligibleResponsibleSerializer(many=True)},
+    )
+    @action(detail=False, methods=['get'], url_path='eligible-responsibles')
+    def eligible_responsibles(self, request):
+        User = get_user_model()
+        qs = User.objects.filter(
+            estado='activo',
+            rol__nombre__in=[
+                Role.Nombre.ADMINISTRADOR,
+                Role.Nombre.REPRESENTANTE,
+                Role.Nombre.MODERADOR,
+            ],
+        ).select_related('rol')
+
+        search = request.query_params.get('search') or request.query_params.get('q')
+        if search:
+            qs = qs.filter(
+                Q(nombres__icontains=search)
+                | Q(apellidos__icontains=search)
+                | Q(correo__icontains=search)
+                | Q(numero_documento__icontains=search)
+            )
+
+        rol = request.query_params.get('rol')
+        if rol:
+            qs = qs.filter(rol__nombre__icontains=rol.strip())
+
+        qs = qs.order_by('nombres', 'apellidos')
+
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = EligibleResponsibleSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = EligibleResponsibleSerializer(qs, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='responsibles')
+    def responsibles(self, request):
+        """Alias compatible para la consulta de responsables elegibles."""
+        return self.eligible_responsibles(request)
 
     def perform_create(self, serializer):
         AuditService.set_db_actor_session(self.request.user)

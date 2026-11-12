@@ -4,6 +4,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Optional, Tuple
 from django.core.exceptions import ValidationError
 from django.db import models
+from drf_spectacular.utils import extend_schema_field, inline_serializer
+from rest_framework import serializers as drf_serializers
 from core.validators import (
     validate_colombia_latitude,
     validate_colombia_longitude,
@@ -93,29 +95,146 @@ def ewkb_hex_to_geojson_point(hex_str: str) -> Optional[dict]:
 
 def point_to_ewkt(value: Any) -> Optional[str]:
     """
-    Converts a GeoJSON Point dict {'type': 'Point', 'coordinates': [lon, lat]}
-    or [lon, lat] tuple into PostGIS EWKT 'SRID=4326;POINT(lon lat)'.
+    Converts a GeoJSON Point dict {'type': 'Point', 'coordinates': [lon, lat], 'srid': 4326},
+    lat/lng dict {'lat': ..., 'lng': ...}, or [lon, lat] tuple into PostGIS EWKT 'SRID=4326;POINT(lon lat)'.
     """
     if value is None or value == '':
         return None
     if isinstance(value, str):
-        if value.upper().startswith('SRID='):
-            return value
-        if value.startswith('{'):
-            value = json.loads(value)
+        text = value.strip()
+        if text.upper().startswith('SRID='):
+            if not text.upper().startswith('SRID=4326;'):
+                raise ValidationError('Solo se admite el sistema de coordenadas WGS84 (SRID 4326).')
+            return text
+        if text.startswith('{'):
+            value = json.loads(text)
     if isinstance(value, dict):
+        srid = value.get('srid')
+        if srid is not None:
+            try:
+                if int(srid) != SRID_WGS84:
+                    raise ValidationError(f'Solo se admite el sistema de referencia espacial WGS84 (SRID {SRID_WGS84}).')
+            except (ValueError, TypeError):
+                raise ValidationError(f'Valor de SRID inválido: {srid}. Se requiere {SRID_WGS84}.')
+
         coords = value.get('coordinates')
-        if not coords or len(coords) < 2:
+        if coords and len(coords) >= 2:
+            lon, lat = float(coords[0]), float(coords[1])
+        elif 'lat' in value and ('lng' in value or 'lon' in value):
+            lat = float(value['lat'])
+            lon = float(value.get('lng', value.get('lon')))
+        elif 'latitude' in value and 'longitude' in value:
+            lat = float(value['latitude'])
+            lon = float(value['longitude'])
+        else:
             return None
-        lon, lat = float(coords[0]), float(coords[1])
     elif isinstance(value, (list, tuple)) and len(value) >= 2:
         lon, lat = float(value[0]), float(value[1])
     else:
-        raise ValidationError('Formato de punto geográfico inválido. Use {"type": "Point", "coordinates": [lon, lat]}.')
+        raise ValidationError('Formato de punto geográfico inválido. Use {"type": "Point", "coordinates": [lon, lat], "srid": 4326} o {"lat": ..., "lng": ...}.')
 
     validate_colombia_longitude(Decimal(str(lon)))
     validate_colombia_latitude(Decimal(str(lat)))
     return f'SRID={SRID_WGS84};POINT({lon:.6f} {lat:.6f})'
+
+
+@extend_schema_field(
+    inline_serializer(
+        name='GeoPointDTO',
+        fields={
+            'type': drf_serializers.CharField(default='Point', help_text='Tipo de geometría GeoJSON ("Point")'),
+            'srid': drf_serializers.IntegerField(default=4326, help_text='Identificador de referencia espacial (fijado en 4326 / WGS84)'),
+            'coordinates': drf_serializers.ListField(
+                child=drf_serializers.FloatField(),
+                min_length=2,
+                max_length=2,
+                help_text='Coordenadas [longitud, latitud] en grados decimales (WGS84, bounds Colombia)',
+            ),
+        },
+    )
+)
+class GeoPointField(drf_serializers.Field):
+    """
+    Campo DRF para puntos geográficos PostGIS geometry(Point, 4326).
+    - Salida (lectura): RFC 7946 GeoJSON: {"type": "Point", "srid": 4326, "coordinates": [lon, lat]}
+    - Entrada (escritura): Acepta GeoJSON estándar, objeto {"lat": ..., "lng": ...}, o arreglo [lon, lat].
+    - Validación: Obliga SRID 4326 y valida límites geográficos de Colombia.
+    """
+    def to_representation(self, value):
+        if value is None:
+            return None
+        if isinstance(value, dict) and 'coordinates' in value:
+            return value
+        if isinstance(value, str):
+            res = ewkb_hex_to_geojson_point(value)
+            if res:
+                return res
+        return value
+
+    def to_internal_value(self, data):
+        if data is None or data == '':
+            return None
+        if isinstance(data, str):
+            text = data.strip()
+            if text.startswith('{'):
+                try:
+                    data = json.loads(text)
+                except Exception:
+                    raise drf_serializers.ValidationError('La cadena JSON de ubicación geográfica no es válida.')
+            elif 'POINT' in text.upper():
+                if text.upper().startswith('SRID=') and not text.upper().startswith('SRID=4326;'):
+                    raise drf_serializers.ValidationError('Solo se admite el sistema de coordenadas WGS84 (SRID 4326).')
+                res = ewkb_hex_to_geojson_point(text)
+                if not res:
+                    raise drf_serializers.ValidationError('Cadena EWKT de punto geográfico inválida.')
+                data = res
+
+        srid = 4326
+        if isinstance(data, dict):
+            if 'srid' in data and data['srid'] is not None:
+                try:
+                    srid = int(data['srid'])
+                except (ValueError, TypeError):
+                    raise drf_serializers.ValidationError('El valor de "srid" debe ser numérico (4326).')
+                if srid != 4326:
+                    raise drf_serializers.ValidationError(f'SRID {srid} no soportado. Se exige SRID 4326 (WGS84).')
+
+            if 'coordinates' in data:
+                coords = data['coordinates']
+                if not isinstance(coords, (list, tuple)) or len(coords) < 2:
+                    raise drf_serializers.ValidationError('El campo "coordinates" debe ser un arreglo [longitud, latitud].')
+                lon, lat = coords[0], coords[1]
+            elif 'lat' in data and ('lng' in data or 'lon' in data):
+                lat = data['lat']
+                lon = data.get('lng', data.get('lon'))
+            elif 'latitude' in data and 'longitude' in data:
+                lat = data['latitude']
+                lon = data['longitude']
+            else:
+                raise drf_serializers.ValidationError(
+                    'Formato de ubicación no reconocido. Envíe GeoJSON {"type": "Point", "coordinates": [lon, lat], "srid": 4326} '
+                    'o un objeto con {"lat": ..., "lng": ...}.'
+                )
+        elif isinstance(data, (list, tuple)):
+            if len(data) < 2:
+                raise drf_serializers.ValidationError('El arreglo de coordenadas debe tener al menos [longitud, latitud].')
+            lon, lat = data[0], data[1]
+        else:
+            raise drf_serializers.ValidationError('Tipo de dato no válido para ubicación geográfica.')
+
+        try:
+            lon_f = float(lon)
+            lat_f = float(lat)
+        except (ValueError, TypeError):
+            raise drf_serializers.ValidationError('Las coordenadas de longitud y latitud deben ser números válidos.')
+
+        try:
+            validate_colombia_longitude(Decimal(str(lon_f)))
+            validate_colombia_latitude(Decimal(str(lat_f)))
+        except ValidationError as exc:
+            raise drf_serializers.ValidationError(list(exc.messages) if hasattr(exc, 'messages') else str(exc))
+
+        return make_geojson_point(lon_f, lat_f)
 
 
 class PostGISPointField(models.Field):
