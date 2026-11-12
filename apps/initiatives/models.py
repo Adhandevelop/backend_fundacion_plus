@@ -94,6 +94,9 @@ class Initiative(models.Model):
             self.slug = slug
         if self.estado_publicacion == self.EstadoPublicacion.PUBLICADA and not self.fecha_publicacion:
             self.fecha_publicacion = timezone.now()
+        if self.destacada and self.estado_publicacion != self.EstadoPublicacion.PUBLICADA:
+            self.destacada = False
+            self.orden_destacado = None
         self.fecha_actualizacion = timezone.now()
         super().save(*args, **kwargs)
 

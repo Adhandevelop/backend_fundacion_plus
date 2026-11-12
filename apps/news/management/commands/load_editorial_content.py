@@ -16,14 +16,14 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            '--publish',
+            '--draft',
             action='store_true',
-            help='Publicar directamente los contenidos aprobados en lugar de dejarlos en borrador.',
+            help='Cargar los contenidos en borrador en lugar de publicarlos.',
         )
 
     @transaction.atomic
     def handle(self, *args, **options):
-        publish = options.get('publish', True)
+        publish = not options.get('draft', False)
         self.stdout.write(self.style.NOTICE('==> Iniciando carga editorial de PLUS...'))
 
         # Obtener un autor institucional (admin o primer usuario activo)
@@ -153,15 +153,26 @@ class Command(BaseCommand):
 
         for ini in iniciativas_data:
             slug = ini.pop('slug')
+            is_destacada = ini.pop('destacada', False) if publish else False
+            orden_dest = ini.pop('orden_destacado', None) if publish else None
             initiative, created = Initiative.objects.get_or_create(
                 slug=slug,
                 defaults={
                     'creador': author,
                     'estado_publicacion': Initiative.EstadoPublicacion.PUBLICADA if publish else Initiative.EstadoPublicacion.BORRADOR,
                     'fecha_publicacion': timezone.now() if publish else None,
+                    'destacada': is_destacada,
+                    'orden_destacado': orden_dest,
                     **ini,
                 },
             )
+            if not created and publish:
+                initiative.estado_publicacion = Initiative.EstadoPublicacion.PUBLICADA
+                if not initiative.fecha_publicacion:
+                    initiative.fecha_publicacion = timezone.now()
+                initiative.destacada = is_destacada
+                initiative.orden_destacado = orden_dest
+                initiative.save(update_fields=['estado_publicacion', 'fecha_publicacion', 'destacada', 'orden_destacado', 'fecha_actualizacion'])
             # Asegurar al menos una edición vigente para la iniciativa
             edicion, _ = InitiativeEdition.objects.get_or_create(
                 iniciativa=initiative,
