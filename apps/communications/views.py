@@ -414,6 +414,40 @@ class AdminCaseCommentModerationViewSet(viewsets.ModelViewSet):
         """Alias compatible con POST /api/v1/admin/comments/{id}/moderate/"""
         return self._apply_moderation(request)
 
+    @extend_schema(
+        summary='Consultar historial autorizado de decisiones de moderación de un comentario (P14)',
+    )
+    @action(detail=True, methods=['get'], url_path='history')
+    def history(self, request, pk=None):
+        """P14: Retorna el historial de decisiones de moderación para este comentario."""
+        from apps.audit.models import AuditLog
+        comment = self.get_object()
+        logs = (
+            AuditLog.objects.filter(
+                modulo='comentarios',
+                id_registro=comment.pk,
+            )
+            .select_related('usuario')
+            .order_by('-fecha_evento')
+        )
+        items = []
+        for log in logs:
+            items.append({
+                'id': str(log.id),
+                'actor_id': str(log.usuario_id) if log.usuario_id else None,
+                'actor_nombre': log.usuario.full_name if log.usuario else 'Sistema',
+                'fecha': log.fecha_evento,
+                'estado_anterior': (log.datos_anteriores or {}).get('estado_moderacion'),
+                'estado_nuevo': (log.datos_nuevos or {}).get('estado_moderacion'),
+                'motivo': (log.datos_nuevos or {}).get('motivo', ''),
+                'descripcion': log.descripcion,
+            })
+        return Response({
+            'comment_id': str(comment.id),
+            'count': len(items),
+            'history': items,
+        })
+
 
 class PublicEventProposalCreateView(generics.CreateAPIView):
     """PUB-08: POST /api/v1/public/initiative-proposals/ (y /api/v1/citizen/proposals/)"""

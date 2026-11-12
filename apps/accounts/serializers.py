@@ -495,6 +495,41 @@ class AdminUserCreateUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Este correo electrónico ya está registrado.')
         return normalized
 
+    def validate_password(self, value):
+        if value:
+            validate_password(value, user=self.instance)
+        return value
+
+    def validate(self, attrs):
+        if self.instance and self.instance.is_last_active_admin:
+            new_estado = attrs.get('estado')
+            if new_estado and new_estado != User.Estado.ACTIVO:
+                raise serializers.ValidationError({
+                    'code': 'last_admin_lock',
+                    'estado': 'No puedes suspender o desactivar al único administrador activo del sistema.',
+                })
+            new_rol = attrs.get('rol')
+            new_rol_id = attrs.get('rol_id')
+            new_rol_nombre = attrs.get('rol_nombre')
+            if new_rol and normalize_role_name(new_rol.nombre) != Role.Nombre.ADMINISTRADOR:
+                raise serializers.ValidationError({
+                    'code': 'last_admin_lock',
+                    'rol': 'No puedes cambiar el rol del único administrador activo del sistema.',
+                })
+            if new_rol_nombre and normalize_role_name(new_rol_nombre) != Role.Nombre.ADMINISTRADOR:
+                raise serializers.ValidationError({
+                    'code': 'last_admin_lock',
+                    'rol': 'No puedes cambiar el rol del único administrador activo del sistema.',
+                })
+            if new_rol_id:
+                target_role = Role.objects.filter(pk=new_rol_id).first()
+                if target_role and normalize_role_name(target_role.nombre) != Role.Nombre.ADMINISTRADOR:
+                    raise serializers.ValidationError({
+                        'code': 'last_admin_lock',
+                        'rol': 'No puedes cambiar el rol del único administrador activo del sistema.',
+                    })
+        return attrs
+
     @transaction.atomic
     def create(self, validated_data):
         rol_nombre = validated_data.pop('rol_nombre', None)

@@ -27,6 +27,7 @@ from apps.dynamic_forms.serializers import (
     AdminFormularioSubmissionListSerializer,
     CitizenSubmissionDetailSerializer,
     CitizenSubmissionListSerializer,
+    FormularioVersionDetailSerializer,
     PublicActivationResendSerializer,
     PublicActivationVerifySerializer,
     PublicFormularioDetailSerializer,
@@ -133,6 +134,17 @@ class AdminFormularioViewSet(viewsets.ModelViewSet):
         nuevo = FormularioService.duplicate_formulario(formulario, actor=request.user)
         serializer = AdminFormularioDetailSerializer(nuevo)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get'], url_path=r'versions/(?P<version_num>[0-9]+)')
+    def version_detail(self, request, pk=None, version_num=None):
+        """P17: Consulta administrativa detallada de una versión congelada con preguntas y opciones."""
+        formulario = self.get_object()
+        version = get_object_or_404(
+            formulario.versiones.prefetch_related('preguntas__opciones'),
+            numero_version=int(version_num),
+        )
+        serializer = FormularioVersionDetailSerializer(version)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path=r'versions/(?P<version_num>[0-9]+)/create-draft')
     def create_draft(self, request, pk=None, version_num=None):

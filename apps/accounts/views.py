@@ -12,6 +12,7 @@ from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema, inline_serializer
 from rest_framework import generics, permissions, serializers as drf_serializers, status, viewsets
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -653,24 +654,23 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         if case_id := (params.get('eligible_for_case') or params.get('id_caso')):
             from apps.cases.models import Case
             case = Case.objects.filter(pk=case_id).first()
-            if case:
-                qs = qs.filter(
-                    estado=User.Estado.ACTIVO,
-                    rol__nombre__in=[Role.Nombre.REPRESENTANTE, Role.Nombre.ADMINISTRADOR],
-                ).filter(
-                    Q(rol__nombre=Role.Nombre.ADMINISTRADOR)
-                    | Q(
-                        asignaciones_ambito__activo=True,
-                        asignaciones_ambito__comunidad_id=case.comunidad_id,
-                    )
-                    | Q(
-                        asignaciones_ambito__activo=True,
-                        asignaciones_ambito__tipo_caso_id=case.tipo_caso_id,
-                    )
-                ).distinct()
-            else:
-                # P10: Si el caso no existe, no devolver todos los usuarios sino conjunto vacío
-                qs = qs.none()
+            if not case:
+                # P10: Responder error explícito si el caso no existe en el filtro de candidatos
+                raise ValidationError({'eligible_for_case': f'El caso con identificador "{case_id}" no existe.'})
+            qs = qs.filter(
+                estado=User.Estado.ACTIVO,
+                rol__nombre__in=[Role.Nombre.REPRESENTANTE, Role.Nombre.ADMINISTRADOR],
+            ).filter(
+                Q(rol__nombre=Role.Nombre.ADMINISTRADOR)
+                | Q(
+                    asignaciones_ambito__activo=True,
+                    asignaciones_ambito__comunidad_id=case.comunidad_id,
+                )
+                | Q(
+                    asignaciones_ambito__activo=True,
+                    asignaciones_ambito__tipo_caso_id=case.tipo_caso_id,
+                )
+            ).distinct()
         return qs
 
     def perform_create(self, serializer):
@@ -736,16 +736,12 @@ class AdminUserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Impedir auto-degradación si es el único administrador activo
-        if (
-            target_user.id == request.user.id
-            and target_role_name != Role.Nombre.ADMINISTRADOR
-            and User.objects.filter(rol__nombre=Role.Nombre.ADMINISTRADOR, estado=User.Estado.ACTIVO).count() <= 1
-        ):
+        # P15: Impedir cambio de rol si es el único administrador activo (last_admin_lock centralizado)
+        if target_role_name != Role.Nombre.ADMINISTRADOR and target_user.is_last_active_admin:
             return Response(
                 {
                     'code': 'last_admin_lock',
-                    'message': 'No puedes revocar tus propios permisos de administrador porque eres el único administrador activo.',
+                    'message': 'No puedes revocar los permisos de administrador porque es el único administrador activo del sistema.',
                     'errors': {},
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -831,16 +827,12 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         new_estado = serializer.validated_data['estado']
         prev_estado = target_user.estado
 
-        # Impedir auto-desactivación si es el único administrador activo
-        if (
-            target_user.id == request.user.id
-            and new_estado != User.Estado.ACTIVO
-            and User.objects.filter(rol__nombre=Role.Nombre.ADMINISTRADOR, estado=User.Estado.ACTIVO).count() <= 1
-        ):
+        # P15: Impedir auto-desactivación o desactivar al único administrador activo (last_admin_lock centralizado)
+        if new_estado != User.Estado.ACTIVO and target_user.is_last_active_admin:
             return Response(
                 {
                     'code': 'last_admin_lock',
-                    'message': 'No puedes suspender o desactivar tu cuenta porque eres el único administrador activo.',
+                    'message': 'No puedes suspender o desactivar la cuenta porque es el único administrador activo del sistema.',
                     'errors': {},
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -865,6 +857,20 @@ class AdminUserViewSet(viewsets.ModelViewSet):
             request=request,
         )
         return Response(UserMeSerializer(target_user).data, status=status.HTTP_200_OK)
+
+    def destroy(self, request, *args, **kwargs):
+        """P15: Bloquear eliminación del último administrador activo."""
+        target_user = self.get_object()
+        if target_user.is_last_active_admin:
+            return Response(
+                {
+                    'code': 'last_admin_lock',
+                    'message': 'No puedes eliminar al único administrador activo del sistema.',
+                    'errors': {},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 class AdminRoleViewSet(viewsets.ModelViewSet):

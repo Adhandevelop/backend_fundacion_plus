@@ -2,6 +2,7 @@ from typing import Optional
 import uuid as uuid_lib
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import connection, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.accounts.models import Role, User
@@ -282,6 +283,18 @@ class CaseService:
             raise ValidationError(
                 {'responsable': 'El usuario seleccionado no posee un rol activo de Representante/Responsable o Administrador.'}
             )
+
+        # P10: Validar compatibilidad de ámbitos territoriales o temáticos si es representante
+        if not responsable.has_any_role(Role.Nombre.ADMINISTRADOR):
+            active_scopes = responsable.asignaciones_ambito.filter(activo=True)
+            if active_scopes.exists():
+                matches_scope = active_scopes.filter(
+                    Q(comunidad_id=case.comunidad_id) | Q(tipo_caso_id=case.tipo_caso_id)
+                ).exists()
+                if not matches_scope:
+                    raise ValidationError(
+                        {'responsable': 'El representante seleccionado no tiene ámbito asignado para la comunidad o tipo de caso de este expediente.'}
+                    )
 
         AuditService.set_db_actor_session(actor)
         case.asignaciones.filter(activo=True).update(

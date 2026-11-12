@@ -27,6 +27,8 @@ from apps.initiatives.serializers import (
     InitiativeListSerializer,
     InitiativeMediaSerializer,
     InitiativeMetricSerializer,
+    PublicInitiativeActivitySerializer,
+    PublicInitiativeEditionSerializer,
 )
 
 
@@ -129,12 +131,12 @@ class PublicInitiativeGalleryView(generics.ListAPIView):
 
 class PublicInitiativeEditionListView(generics.ListAPIView):
     """INI-01: GET /api/v1/public/initiatives/{id}/editions/"""
-    serializer_class = InitiativeEditionSerializer
+    serializer_class = PublicInitiativeEditionSerializer
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
         initiative = resolve_published_initiative(self.kwargs['lookup'])
-        qs = initiative.ediciones.prefetch_related('indicadores', 'actividades', 'comunidades_vinculadas').all()
+        qs = initiative.ediciones.prefetch_related('indicadores', 'actividades').all()
         if anio := self.request.query_params.get('anio'):
             qs = qs.filter(anio=anio)
         return qs
@@ -145,13 +147,13 @@ class PublicInitiativeEditionDetailView(generics.RetrieveAPIView):
     INI-02: GET /api/v1/public/initiatives/{id}/editions/{edition_id}/
     Comprueba estrictamente la pertenencia de la edición al programa indicado.
     """
-    serializer_class = InitiativeEditionSerializer
+    serializer_class = PublicInitiativeEditionSerializer
     permission_classes = [permissions.AllowAny]
 
     def get_object(self):
         initiative = resolve_published_initiative(self.kwargs['lookup'])
         return get_object_or_404(
-            initiative.ediciones.prefetch_related('indicadores', 'actividades', 'comunidades_vinculadas'),
+            initiative.ediciones.prefetch_related('indicadores', 'actividades'),
             pk=self.kwargs['edition_id'],
         )
 
@@ -160,7 +162,7 @@ class PublicInitiativeEditionActivityListView(generics.ListAPIView):
     """
     INI-03: GET /api/v1/public/initiatives/{id}/editions/{edition_id}/activities/
     """
-    serializer_class = InitiativeActivitySerializer
+    serializer_class = PublicInitiativeActivitySerializer
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):

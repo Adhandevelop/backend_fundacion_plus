@@ -118,6 +118,18 @@ class AdminAuditEventListView(APIView):
         source_filter = (params.get('source') or params.get('fuente') or '').strip().lower()
         actor_filter = params.get('actor') or params.get('id_usuario')
         action_filter = params.get('action') or params.get('accion')
+        fecha_desde = params.get('fecha_desde') or params.get('from_date')
+        fecha_hasta = params.get('fecha_hasta') or params.get('to_date')
+        case_filter = params.get('caso') or params.get('case_id')
+
+        try:
+            page = max(1, int(params.get('page', 1)))
+        except (ValueError, TypeError):
+            page = 1
+        try:
+            page_size = min(100, max(1, int(params.get('page_size', 50))))
+        except (ValueError, TypeError):
+            page_size = 50
 
         items = []
 
@@ -127,7 +139,13 @@ class AdminAuditEventListView(APIView):
                 qs = qs.filter(usuario_id=actor_filter)
             if action_filter:
                 qs = qs.filter(accion__iexact=action_filter)
-            for e in qs[:100]:
+            if fecha_desde:
+                qs = qs.filter(fecha_evento__gte=fecha_desde)
+            if fecha_hasta:
+                qs = qs.filter(fecha_evento__lte=fecha_hasta)
+            if case_filter:
+                qs = qs.filter(tabla_afectada='casos', id_registro=case_filter)
+            for e in qs[:300]:
                 changed_cols = None
                 desc = f'{e.accion} en {e.tabla_afectada or e.modulo}'
                 if isinstance(e.datos_nuevos, dict):
@@ -149,11 +167,17 @@ class AdminAuditEventListView(APIView):
                     'timestamp': e.fecha_evento,
                 })
 
-        if not source_filter or source_filter in ('accesos', 'auditoria_accesos'):
+        if not case_filter and (not source_filter or source_filter in ('accesos', 'auditoria_accesos')):
             qs = AuditAccess.objects.select_related('usuario').all()
             if actor_filter:
                 qs = qs.filter(usuario_id=actor_filter)
-            for a in qs[:100]:
+            if action_filter:
+                qs = qs.filter(tipo_evento__iexact=action_filter)
+            if fecha_desde:
+                qs = qs.filter(fecha_evento__gte=fecha_desde)
+            if fecha_hasta:
+                qs = qs.filter(fecha_evento__lte=fecha_hasta)
+            for a in qs[:300]:
                 items.append({
                     'event_ref': f'accesos:{a.id}',
                     'id': str(a.id),
@@ -174,7 +198,15 @@ class AdminAuditEventListView(APIView):
             qs = AuditCase.objects.select_related('caso', 'usuario').all()
             if actor_filter:
                 qs = qs.filter(usuario_id=actor_filter)
-            for c in qs[:100]:
+            if action_filter:
+                qs = qs.filter(tipo_accion__iexact=action_filter)
+            if fecha_desde:
+                qs = qs.filter(fecha_accion__gte=fecha_desde)
+            if fecha_hasta:
+                qs = qs.filter(fecha_accion__lte=fecha_hasta)
+            if case_filter:
+                qs = qs.filter(caso_id=case_filter)
+            for c in qs[:300]:
                 items.append({
                     'event_ref': f'casos:{c.id}',
                     'id': str(c.id),
@@ -192,11 +224,17 @@ class AdminAuditEventListView(APIView):
                     'timestamp': c.fecha_accion,
                 })
 
-        if not source_filter or source_filter in ('permisos', 'auditoria_permisos'):
+        if not case_filter and (not source_filter or source_filter in ('permisos', 'auditoria_permisos')):
             qs = AuditPermission.objects.select_related('usuario_afectado', 'usuario_responsable').all()
             if actor_filter:
                 qs = qs.filter(usuario_responsable_id=actor_filter)
-            for p in qs[:100]:
+            if action_filter:
+                qs = qs.filter(tipo_cambio__iexact=action_filter)
+            if fecha_desde:
+                qs = qs.filter(fecha_cambio__gte=fecha_desde)
+            if fecha_hasta:
+                qs = qs.filter(fecha_cambio__lte=fecha_hasta)
+            for p in qs[:300]:
                 items.append({
                     'event_ref': f'permisos:{p.id}',
                     'id': str(p.id),
@@ -214,9 +252,17 @@ class AdminAuditEventListView(APIView):
                     'timestamp': p.fecha_cambio,
                 })
 
-        if not source_filter or source_filter in ('seguridad', 'auditoria_seguridad'):
+        if not case_filter and (not source_filter or source_filter in ('seguridad', 'auditoria_seguridad')):
             qs = AuditSecurity.objects.select_related('usuario').all()
-            for s in qs[:100]:
+            if actor_filter:
+                qs = qs.filter(usuario_id=actor_filter)
+            if action_filter:
+                qs = qs.filter(tipo_evento__iexact=action_filter)
+            if fecha_desde:
+                qs = qs.filter(fecha_evento__gte=fecha_desde)
+            if fecha_hasta:
+                qs = qs.filter(fecha_evento__lte=fecha_hasta)
+            for s in qs[:300]:
                 items.append({
                     'event_ref': f'seguridad:{s.id}',
                     'id': str(s.id),
@@ -234,17 +280,25 @@ class AdminAuditEventListView(APIView):
                 })
 
         items.sort(key=lambda x: x['timestamp'], reverse=True)
+        total_count = len(items)
+        start = (page - 1) * page_size
+        end = start + page_size
+        paginated_items = items[start:end]
+
         return Response({
             'kpis': {
-                'total_events': len(items),
+                'total_events': total_count,
                 'eventos': AuditLog.objects.count(),
                 'accesos': AuditAccess.objects.count(),
                 'casos': AuditCase.objects.count(),
                 'permisos': AuditPermission.objects.count(),
                 'seguridad': AuditSecurity.objects.count(),
             },
-            'count': len(items),
-            'results': items[:200],
+            'count': total_count,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': (total_count + page_size - 1) // page_size if total_count > 0 else 1,
+            'results': paginated_items,
         })
 
 

@@ -345,6 +345,16 @@ class User(AbstractBaseUser):
         perms['can_manage_forms'] = self.can_manage_forms
         return perms
 
+    @property
+    def is_last_active_admin(self) -> bool:
+        """Indica si el usuario es el único administrador activo del sistema (P15: last_admin_lock)."""
+        if not self.is_active or not self.has_role(Role.Nombre.ADMINISTRADOR):
+            return False
+        return User.objects.filter(
+            rol__nombre=Role.Nombre.ADMINISTRADOR,
+            estado=User.Estado.ACTIVO,
+        ).exclude(pk=self.pk).count() == 0
+
     def save(self, *args, **kwargs):
         self.correo = self.correo.lower().strip()
         self.fecha_actualizacion = timezone.now()

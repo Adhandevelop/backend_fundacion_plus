@@ -627,3 +627,157 @@ class SuperadminHomeHeroTests(APITestCase):
         self.assertEqual(inst_data['alt_text'], 'Sede Principal Villavicencio Meta')
         self.assertIn('?v=', inst_data['image_url'])
 
+
+class AdditionalIntegrationPointsTests(APITestCase):
+    """Pruebas para verificar las correcciones de P01, P10, P15, P17, P19."""
+
+    def setUp(self):
+        user_model = get_user_model()
+        self.rol_admin, _ = Role.objects.get_or_create(nombre=Role.Nombre.ADMINISTRADOR)
+        self.rol_ciudadano, _ = Role.objects.get_or_create(nombre=Role.Nombre.CIUDADANO)
+        self.rol_rep, _ = Role.objects.get_or_create(nombre=Role.Nombre.REPRESENTANTE)
+
+        self.admin = user_model.objects.create_user(
+            username='solo_admin',
+            email='solo_admin@plus.org',
+            password='ClaveAdmin123!',
+            rol=self.rol_admin,
+            estado=User.Estado.ACTIVO,
+            is_staff=True,
+        )
+        self.ciudadano = user_model.objects.create_user(
+            username='ciudadano_test',
+            email='ciudadano_test@plus.org',
+            password='ClaveCiudadano123!',
+            rol=self.rol_ciudadano,
+            estado=User.Estado.ACTIVO,
+        )
+
+    def test_p15_last_admin_lock_on_status_change_and_role(self):
+        self.client.force_authenticate(user=self.admin)
+
+        # 1. Intentar desactivar al único admin activo -> debe fallar con last_admin_lock
+        res = self.client.patch(
+            f'/api/v1/admin/users/{self.admin.id}/status/',
+            {'estado': 'inactivo', 'motivo': 'Prueba'},
+            format='json',
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.data.get('code'), 'last_admin_lock')
+
+        # 2. Intentar cambiar rol del único admin activo -> debe fallar con last_admin_lock
+        res_rol = self.client.put(
+            f'/api/v1/admin/users/{self.admin.id}/role/',
+            {'role_code': 'ciudadano', 'motivo': 'Prueba rol'},
+            format='json',
+        )
+        self.assertEqual(res_rol.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res_rol.data.get('code'), 'last_admin_lock')
+
+        # 3. Intentar eliminar al único admin activo -> debe fallar con last_admin_lock
+        res_del = self.client.delete(f'/api/v1/admin/users/{self.admin.id}/')
+        self.assertEqual(res_del.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res_del.data.get('code'), 'last_admin_lock')
+
+    def test_p10_candidate_filter_with_nonexistent_case_returns_400(self):
+        self.client.force_authenticate(user=self.admin)
+        import uuid
+        fake_uuid = str(uuid.uuid4())
+        res = self.client.get(f'/api/v1/admin/users/?eligible_for_case={fake_uuid}')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('eligible_for_case', res.data.get('errors', {}))
+
+    def test_p01_citizen_only_rejects_admin_on_citizen_cases_and_dashboard(self):
+        self.client.force_authenticate(user=self.admin)
+
+        # Las rutas ciudadanas deben retornar 403 para administradores
+        self.assertEqual(self.client.get('/api/v1/citizen/cases/').status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.get('/api/v1/citizen/dashboard/').status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.get('/api/v1/me/cases/').status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.get('/api/v1/me/dashboard/').status_code, status.HTTP_403_FORBIDDEN)
+
+        # Y retornar 200 para ciudadano activo
+        self.client.force_authenticate(user=self.ciudadano)
+        self.assertEqual(self.client.get('/api/v1/citizen/cases/').status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get('/api/v1/citizen/dashboard/').status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get('/api/v1/me/cases/').status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get('/api/v1/me/dashboard/').status_code, status.HTTP_200_OK)
+
+    def test_p17_admin_can_retrieve_frozen_form_version_with_questions(self):
+        from apps.dynamic_forms.models import Formulario, FormularioPregunta, FormularioVersion
+        self.client.force_authenticate(user=self.admin)
+        form = Formulario.objects.create(
+            slug='form-test-versions',
+            titulo='Formulario de Prueba Versiones',
+            creado_por=self.admin,
+        )
+        version = FormularioVersion.objects.create(
+            formulario=form,
+            numero_version=1,
+            titulo_congelado='Versión 1 Congelada',
+            es_vigente=True,
+        )
+        FormularioPregunta.objects.create(
+            version=version,
+            codigo='p1_nombre',
+            enunciado='¿Cuál es tu nombre completo?',
+            tipo_campo=FormularioPregunta.TipoCampo.TEXTO_CORTO,
+            orden=1,
+        )
+
+        res = self.client.get(f'/api/v1/admin/forms/{form.id}/versions/1/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data['numero_version'], 1)
+        self.assertEqual(len(res.data['preguntas']), 1)
+        self.assertEqual(res.data['preguntas'][0]['codigo'], 'p1_nombre')
+
+    def test_p19_public_initiative_detail_does_not_leak_responsable_or_cases(self):
+        from apps.initiatives.models import Initiative, InitiativeActivity, InitiativeEdition
+        ini = Initiative.objects.create(
+            titulo='Iniciativa Pública Segura',
+            slug='iniciativa-publica-segura',
+            descripcion='Descripción pública',
+            creador=self.admin,
+            estado_publicacion=Initiative.EstadoPublicacion.PUBLICADA,
+        )
+        ed = InitiativeEdition.objects.create(
+            iniciativa=ini,
+            anio=2026,
+            nombre_edicion='Edición 2026',
+        )
+        InitiativeActivity.objects.create(
+            edicion=ed,
+            titulo='Taller comunitario',
+            descripcion='Taller público',
+            responsable=self.admin,
+            lugar='Villavicencio',
+        )
+
+        # Consulta anónima
+        self.client.logout()
+        self.client.credentials()
+        res = self.client.get(f'/api/v1/public/initiatives/{ini.slug}/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        ediciones = res.data.get('ediciones', [])
+        self.assertTrue(len(ediciones) > 0)
+        actividades = ediciones[0].get('actividades', [])
+        self.assertTrue(len(actividades) > 0)
+        act = actividades[0]
+        # Verificar ausencia de campos sensibles
+        self.assertNotIn('responsable', act)
+        self.assertNotIn('responsable_nombre', act)
+        self.assertNotIn('ubicacion', act)
+        self.assertNotIn('casos_vinculados', ediciones[0])
+
+    def test_p12_audit_event_pagination_and_uniform_filters(self):
+        self.client.force_authenticate(user=self.admin)
+        res = self.client.get('/api/v1/admin/audit-events/?page=1&page_size=10')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIn('count', res.data)
+        self.assertIn('page', res.data)
+        self.assertIn('page_size', res.data)
+        self.assertIn('total_pages', res.data)
+        self.assertIn('results', res.data)
+        self.assertIn('kpis', res.data)
+
+

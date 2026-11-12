@@ -1,7 +1,11 @@
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import generics, permissions, serializers as drf_serializers, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -111,11 +115,103 @@ class AdminNewsArticleViewSet(viewsets.ModelViewSet):
             request=self.request,
         )
 
+    def perform_update(self, serializer):
+        """P18: Auditoría de transiciones y cambios en noticias."""
+        AuditService.set_db_actor_session(self.request.user)
+        prev_status = serializer.instance.estado_publicacion
+        article = serializer.save()
+        new_status = article.estado_publicacion
+        AuditService.log(
+            actor=self.request.user,
+            action='update',
+            module='noticias',
+            target_model='noticias',
+            target_id=article.pk,
+            description=f'Actualización de noticia "{article.titulo}" (estado: {prev_status} -> {new_status})',
+            previous_data={'estado_publicacion': prev_status},
+            new_data={'estado_publicacion': new_status},
+            request=self.request,
+        )
+
+    @action(detail=True, methods=['post'], url_path='publish')
+    def publish(self, request, pk=None):
+        """P18: Publicar noticia con registro en auditoría."""
+        article = self.get_object()
+        AuditService.set_db_actor_session(request.user)
+        prev_status = article.estado_publicacion
+        article.estado_publicacion = NewsArticle.EstadoPublicacion.PUBLICADA
+        if not article.fecha_publicacion:
+            article.fecha_publicacion = timezone.now()
+        article.save(update_fields=['estado_publicacion', 'fecha_publicacion', 'fecha_actualizacion'])
+        AuditService.log(
+            actor=request.user,
+            action='publish',
+            module='noticias',
+            target_model='noticias',
+            target_id=article.pk,
+            description=f'Publicación de noticia: {article.titulo}',
+            previous_data={'estado_publicacion': prev_status},
+            new_data={'estado_publicacion': article.estado_publicacion},
+            request=request,
+        )
+        return Response(NewsArticleDetailSerializer(article).data)
+
+    @action(detail=True, methods=['post'], url_path='archive')
+    def archive(self, request, pk=None):
+        """P18: Archivar noticia con registro en auditoría."""
+        article = self.get_object()
+        AuditService.set_db_actor_session(request.user)
+        prev_status = article.estado_publicacion
+        article.estado_publicacion = NewsArticle.EstadoPublicacion.ARCHIVADA
+        article.save(update_fields=['estado_publicacion', 'fecha_actualizacion'])
+        AuditService.log(
+            actor=request.user,
+            action='archive',
+            module='noticias',
+            target_model='noticias',
+            target_id=article.pk,
+            description=f'Archivado de noticia: {article.titulo}',
+            previous_data={'estado_publicacion': prev_status},
+            new_data={'estado_publicacion': article.estado_publicacion},
+            request=request,
+        )
+        return Response(NewsArticleDetailSerializer(article).data)
+
 
 class AdminNewsMediaViewSet(viewsets.ModelViewSet):
     queryset = NewsMedia.objects.select_related('noticia').all()
     serializer_class = NewsMediaSerializer
     permission_classes = [IsEditorOrAdmin]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def perform_create(self, serializer):
+        """P18: Carga multipart/form-data con validación binaria de archivo."""
+        AuditService.set_db_actor_session(self.request.user)
+        uploaded_file = self.request.FILES.get('file') or self.request.FILES.get('archivo')
+        if uploaded_file:
+            import os
+            from django.core.files.storage import default_storage
+            ext = os.path.splitext(uploaded_file.name)[1].lower()
+            if ext not in ('.jpg', '.jpeg', '.png', '.webp', '.mp4', '.pdf'):
+                raise ValidationError({'file': 'Formato no permitido. Use JPG, PNG, WEBP, MP4 o PDF.'})
+            if uploaded_file.size > 15 * 1024 * 1024:
+                raise ValidationError({'file': 'El archivo excede el tamaño máximo permitido (15MB).'})
+            noticia_id = self.request.data.get('noticia') or getattr(serializer.validated_data.get('noticia'), 'id', 'general')
+            save_name = f'news/{noticia_id}/{uploaded_file.name}'
+            saved_path = default_storage.save(save_name, uploaded_file)
+            media = serializer.save(ruta_archivo=saved_path)
+        else:
+            media = serializer.save()
+
+        AuditService.log(
+            actor=self.request.user,
+            action='insert',
+            module='noticias',
+            target_model='noticia_multimedia',
+            target_id=media.pk,
+            description=f'Carga de multimedia para noticia {media.noticia_id}',
+            request=self.request,
+        )
 
 
 class PublicHomeSummaryView(APIView):
@@ -219,23 +315,33 @@ class AdminMetricsDashboardView(APIView):
         summary='Indicadores operativos del Dashboard Administrativo (ADM-01)',
     )
     def get(self, request):
+        scope_param = request.query_params.get('scope', 'global').lower()
+        cases_base = Case.objects.all()
+        if scope_param == 'assigned':
+            cases_base = cases_base.filter(asignaciones__responsable=request.user, asignaciones__activo=True)
+
         cases_by_pub = dict(
-            Case.objects.values_list('estado_publicacion').annotate(total=Count('id'))
+            cases_base.values_list('estado_publicacion').annotate(total=Count('id'))
         )
         cases_by_estado = dict(
-            Case.objects.values_list('estado__nombre').annotate(total=Count('id'))
+            cases_base.values_list('estado__nombre').annotate(total=Count('id'))
         )
         cases_by_prio = dict(
-            Case.objects.values_list('prioridad').annotate(total=Count('id'))
+            cases_base.values_list('prioridad').annotate(total=Count('id'))
         )
+        my_assigned_count = Case.objects.filter(asignaciones__responsable=request.user, asignaciones__activo=True).count()
+
         return Response({
+            'scope': scope_param,
             'cases': {
-                'total': Case.objects.count(),
+                'total': cases_base.count(),
+                'assigned_to_me': my_assigned_count,
                 'by_estado_publicacion': cases_by_pub,
                 'by_estado_operativo': cases_by_estado,
                 'by_prioridad': cases_by_prio,
                 'open_correction_requests': CaseCorrectionRequest.objects.filter(
-                    estado=CaseCorrectionRequest.Estado.ABIERTA
+                    estado=CaseCorrectionRequest.Estado.ABIERTA,
+                    caso__in=cases_base,
                 ).count(),
             },
             'moderation_queues': {

@@ -174,8 +174,53 @@ class InitiativeListSerializer(serializers.ModelSerializer):
         return InitiativeMetricSerializer(qs, many=True).data
 
 
+class PublicInitiativeActivitySerializer(serializers.ModelSerializer):
+    """P19: Proyección pública mínima de actividades (sin responsable ni coordenadas GeoJSON internas)."""
+    id_actividad = serializers.UUIDField(source='id', read_only=True)
+    comunidad_nombre = serializers.CharField(source='comunidad.nombre', read_only=True)
+
+    class Meta:
+        model = InitiativeActivity
+        fields = [
+            'id',
+            'id_actividad',
+            'titulo',
+            'descripcion',
+            'fecha_inicio',
+            'fecha_fin',
+            'lugar',
+            'comunidad_nombre',
+            'estado',
+        ]
+        read_only_fields = fields
+
+
+class PublicInitiativeEditionSerializer(serializers.ModelSerializer):
+    """P19: Proyección pública autorizada de edición de iniciativa (sin casos internos ni responsables)."""
+    id_edicion = serializers.UUIDField(source='id', read_only=True)
+    indicadores = InitiativeMetricSerializer(many=True, read_only=True)
+    actividades = PublicInitiativeActivitySerializer(many=True, read_only=True)
+
+    class Meta:
+        model = InitiativeEdition
+        fields = [
+            'id',
+            'id_edicion',
+            'anio',
+            'nombre_edicion',
+            'temporada',
+            'descripcion',
+            'fecha_inicio',
+            'fecha_fin',
+            'estado',
+            'indicadores',
+            'actividades',
+        ]
+        read_only_fields = fields
+
+
 class InitiativeDetailSerializer(InitiativeListSerializer):
-    ediciones = InitiativeEditionSerializer(many=True, read_only=True)
+    ediciones = PublicInitiativeEditionSerializer(many=True, read_only=True)
     multimedia = InitiativeMediaSerializer(many=True, read_only=True)
 
     class Meta(InitiativeListSerializer.Meta):
