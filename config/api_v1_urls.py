@@ -30,6 +30,7 @@ from apps.cases.views import (
     AdminCaseReportExportCSVView,
     AdminCaseReportView,
     AdminCaseViewSet,
+    AdminFollowedCaseView,
     CitizenCaseViewSet,
     CitizenDashboardView,
     FollowedCaseView,
@@ -291,6 +292,8 @@ urlpatterns = [
     ),
     path('admin/site/home-hero/', AdminHomeHeroView.as_view(), name='admin-site-home-hero'),
     path('admin/home-hero/', AdminHomeHeroView.as_view(), name='admin-home-hero-alias'),
+    path('admin/followed-cases/', AdminFollowedCaseView.as_view(), name='admin-followed-cases-list'),
+    path('admin/followed-cases/<str:case_id>/', AdminFollowedCaseView.as_view(), name='admin-followed-cases-detail'),
     path('', include('apps.dynamic_forms.urls')),
     path('admin/', include(admin_router.urls)),
 ]

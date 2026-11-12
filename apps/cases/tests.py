@@ -5,7 +5,7 @@ from rest_framework.test import APITestCase
 
 from apps.accounts.models import Role
 from apps.audit.models import AuditCase, AuditLog
-from apps.cases.models import Case, CaseCategory, CaseStatus
+from apps.cases.models import Case, CaseCategory, CaseStatus, FollowedCase
 from apps.initiatives.models import (
     Initiative,
     InitiativeActivity,
@@ -811,3 +811,125 @@ class CasesMapAndPlatformIntegrationTests(APITestCase):
         self.assertEqual(filter_resp.status_code, status.HTTP_200_OK)
         act_results = filter_resp.data.get('results', filter_resp.data)
         self.assertGreaterEqual(len(act_results), 2)
+
+    def test_admin_my_cases_created_by_me_and_followed_cases(self):
+        """
+        Contrato "Mis Casos" para cuentas administrativas:
+        1. Creados por mí: POST /api/v1/admin/cases/ registra creado_por y devuelve creado_por_nombre.
+        2. Filtro ?created_by_me=true en GET /api/v1/admin/cases/ retorna solo casos creados por el admin autenticado.
+        3. Seguidos institucional: GET/POST/DELETE /api/v1/admin/followed-cases/
+           - Exclusivo institucional (IsResponsibleOrAdmin, 403 para ciudadano).
+           - Seguir activa el registro; DELETE lo desactiva lógicamente (activo=False, fecha_baja).
+           - Volver a seguir reactiva el registro existente.
+        """
+        self.client.force_authenticate(user=self.admin)
+
+        # 1. Crear un caso como administrador
+        case_resp = self.client.post(
+            '/api/v1/admin/cases/',
+            {
+                'titulo': 'Caso Institucional Admin 1',
+                'descripcion': 'Descripción del caso creado por admin.',
+                'tipo_caso': str(self.category.id),
+                'comunidad': str(self.community.id),
+                'prioridad': 'alta',
+                'estado_publicacion': 'aprobado',
+            },
+            format='json',
+        )
+        self.assertEqual(case_resp.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(case_resp.data['creado_por'], str(self.admin.id))
+        self.assertEqual(case_resp.data['creado_por_nombre'], self.admin.full_name)
+        admin_case_id = case_resp.data['id']
+
+        # 2. Filtrar ?created_by_me=true
+        my_cases_resp = self.client.get('/api/v1/admin/cases/?created_by_me=true')
+        self.assertEqual(my_cases_resp.status_code, status.HTTP_200_OK)
+        results = my_cases_resp.data.get('results', my_cases_resp.data)
+        my_case_ids = [c['id'] for c in results]
+        self.assertIn(admin_case_id, my_case_ids)
+        for c in results:
+            self.assertEqual(c['creado_por'], str(self.admin.id))
+
+        # 3. Casos seguidos institucionales (/api/v1/admin/followed-cases/)
+        # Crear otro caso aprobado que el admin NO creó
+        other_case = Case.objects.create(
+            usuario=self.citizen,
+            tipo_caso=self.category,
+            comunidad=self.community,
+            estado=CaseStatus.get_by_name('en_proceso'),
+            titulo='Caso Ciudadano para Seguir',
+            descripcion='Caso público para verificar seguimiento institucional.',
+            estado_publicacion=Case.EstadoPublicacion.APROBADO,
+        )
+
+        # Seguir caso vía POST /admin/followed-cases/{case_id}/
+        follow_resp = self.client.post(f'/api/v1/admin/followed-cases/{other_case.id}/')
+        self.assertEqual(follow_resp.status_code, status.HTTP_200_OK)
+        self.assertTrue(follow_resp.data['activo'])
+        self.assertEqual(follow_resp.data['id_caso'], str(other_case.id))
+
+        # Listar seguidos: GET /admin/followed-cases/
+        list_followed = self.client.get('/api/v1/admin/followed-cases/')
+        self.assertEqual(list_followed.status_code, status.HTTP_200_OK)
+        followed_results = list_followed.data.get('results', list_followed.data)
+        followed_ids = [f['id_caso'] for f in followed_results]
+        self.assertIn(str(other_case.id), followed_ids)
+
+        # Consultar detalle de seguimiento
+        detail_follow = self.client.get(f'/api/v1/admin/followed-cases/{other_case.id}/')
+        self.assertEqual(detail_follow.status_code, status.HTTP_200_OK)
+        self.assertTrue(detail_follow.data['followed'])
+
+        # Dejar de seguir: DELETE /admin/followed-cases/{case_id}/
+        unfollow_resp = self.client.delete(f'/api/v1/admin/followed-cases/{other_case.id}/')
+        self.assertEqual(unfollow_resp.status_code, status.HTTP_204_NO_CONTENT)
+
+        # Verificar baja lógica: activo=False, fecha_baja poblada
+        follow_record = FollowedCase.objects.get(usuario=self.admin, caso=other_case)
+        self.assertFalse(follow_record.activo)
+        self.assertIsNotNone(follow_record.fecha_baja)
+
+        # Ya no aparece en el listado activo
+        list_after = self.client.get('/api/v1/admin/followed-cases/')
+        self.assertEqual(list_after.status_code, status.HTTP_200_OK)
+        after_ids = [f['id_caso'] for f in list_after.data.get('results', list_after.data)]
+        self.assertNotIn(str(other_case.id), after_ids)
+
+        # Volver a seguir reactiva el registro
+        refollow_resp = self.client.post('/api/v1/admin/followed-cases/', {'caso': str(other_case.id)}, format='json')
+        self.assertEqual(refollow_resp.status_code, status.HTTP_200_OK)
+        follow_record.refresh_from_db()
+        self.assertTrue(follow_record.activo)
+        self.assertIsNone(follow_record.fecha_baja)
+
+        # Exclusividad: cuenta ciudadana recibe 403 Forbidden en /admin/followed-cases/
+        self.client.force_authenticate(user=self.citizen)
+        cit_resp = self.client.get('/api/v1/admin/followed-cases/')
+        self.assertEqual(cit_resp.status_code, status.HTTP_403_FORBIDDEN)
+
+        # 4. Historial de moderación de comentarios (P14)
+        self.client.force_authenticate(user=self.admin)
+        from apps.communications.models import CaseComment
+        comm = CaseComment.objects.create(
+            caso=other_case,
+            usuario=self.citizen,
+            contenido='Comentario para prueba de historial.',
+            estado_moderacion='pendiente',
+        )
+        # Moderar comentario para generar evento en auditoria_eventos
+        self.client.post(
+            f'/api/v1/admin/comments/{comm.id}/moderation/',
+            {
+                'estado_moderacion': 'aprobado',
+                'motivo': 'Aprobado tras revisión comunitaria.',
+            },
+            format='json',
+        )
+        hist_resp = self.client.get(f'/api/v1/admin/comments/{comm.id}/history/')
+        self.assertEqual(hist_resp.status_code, status.HTTP_200_OK)
+        hist_results = hist_resp.data.get('results', hist_resp.data.get('history', []))
+        self.assertGreaterEqual(len(hist_results), 1)
+        self.assertEqual(hist_results[0]['decision'], 'aprobado')
+        self.assertEqual(hist_results[0]['actor_nombre'], self.admin.full_name)
+        self.assertEqual(hist_results[0]['motivo'], 'Aprobado tras revisión comunitaria.')

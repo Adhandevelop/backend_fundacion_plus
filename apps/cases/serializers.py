@@ -194,6 +194,12 @@ class FollowedCaseSerializer(serializers.ModelSerializer):
     id_caso = serializers.UUIDField(source='caso_id', read_only=True)
     codigo = serializers.CharField(source='caso.codigo', read_only=True)
     titulo = serializers.CharField(source='caso.titulo', read_only=True)
+    estado_nombre = serializers.CharField(source='caso.estado.nombre', read_only=True)
+    comunidad_nombre = serializers.CharField(source='caso.comunidad.nombre', read_only=True)
+    municipio_nombre = serializers.CharField(source='caso.comunidad.municipio.nombre', read_only=True)
+    tipo_nombre = serializers.CharField(source='caso.tipo_caso.nombre', read_only=True)
+    prioridad = serializers.CharField(source='caso.prioridad', read_only=True)
+    estado_publicacion = serializers.CharField(source='caso.estado_publicacion', read_only=True)
 
     class Meta:
         model = FollowedCase
@@ -203,6 +209,12 @@ class FollowedCaseSerializer(serializers.ModelSerializer):
             'id_caso',
             'codigo',
             'titulo',
+            'estado_nombre',
+            'comunidad_nombre',
+            'municipio_nombre',
+            'tipo_nombre',
+            'prioridad',
+            'estado_publicacion',
             'activo',
             'fecha_creacion',
             'fecha_baja',
@@ -498,9 +510,13 @@ class CitizenCaseCreateUpdateSerializer(serializers.ModelSerializer):
 class AdminCaseDetailSerializer(serializers.ModelSerializer):
     id_caso = serializers.UUIDField(source='id', read_only=True)
     radicado_code = serializers.CharField(source='codigo', read_only=True)
+    estado = serializers.PrimaryKeyRelatedField(queryset=CaseStatus.objects.all(), required=False)
     usuario_nombre = serializers.CharField(source='usuario.full_name', read_only=True)
     usuario_correo = serializers.CharField(source='usuario.correo', read_only=True)
     usuario_telefono = serializers.CharField(source='usuario.telefono', read_only=True)
+    creado_por = serializers.UUIDField(source='usuario_id', read_only=True)
+    creado_por_nombre = serializers.CharField(source='usuario.full_name', read_only=True)
+    creado_por_correo = serializers.CharField(source='usuario.correo', read_only=True)
     tipo_nombre = serializers.CharField(source='tipo_caso.nombre', read_only=True)
     tipo_categoria = serializers.CharField(source='tipo_caso.categoria', read_only=True)
     tipo_naturaleza = serializers.CharField(source='tipo_caso.naturaleza', read_only=True)
@@ -535,6 +551,9 @@ class AdminCaseDetailSerializer(serializers.ModelSerializer):
             'usuario_nombre',
             'usuario_correo',
             'usuario_telefono',
+            'creado_por',
+            'creado_por_nombre',
+            'creado_por_correo',
             'tipo_caso',
             'tipo_nombre',
             'tipo_categoria',
@@ -578,6 +597,11 @@ class AdminCaseDetailSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         user = getattr(request, 'user', None) if request else None
         return CaseService.get_allowed_actions(user, obj)
+
+    def validate(self, attrs):
+        if not self.instance and not attrs.get('estado'):
+            attrs['estado'] = CaseStatus.get_default_status()
+        return super().validate(attrs)
 
 
 class CaseModerationActionSerializer(serializers.Serializer):

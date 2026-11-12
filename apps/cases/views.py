@@ -402,6 +402,97 @@ class FollowedCaseView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class AdminFollowedCaseView(APIView):
+    """
+    Gestión de casos seguidos para cuentas institucionales / administrativas (IsResponsibleOrAdmin).
+    Permite consultar, seguir y dejar de seguir casos públicos sin usar rutas ciudadanas /me.
+    """
+    serializer_class = FollowedCaseSerializer
+    permission_classes = [IsResponsibleOrAdmin]
+
+    def _get_followable_case(self, case_id) -> Case:
+        qs = Case.objects.filter(
+            Q(estado_publicacion=Case.EstadoPublicacion.APROBADO) | Q(usuario=self.request.user)
+        )
+        return resolve_case_by_ref(qs, case_id)
+
+    @extend_schema(
+        summary="Listar casos seguidos por la cuenta administrativa autenticada",
+        description=(
+            "Retorna la colección de casos que el usuario institucional autenticado "
+            "ha marcado para seguimiento. Solo incluye registros activos."
+        ),
+        responses={200: FollowedCaseSerializer(many=True)},
+    )
+    def get(self, request, case_id=None):
+        if not case_id:
+            follows = (
+                FollowedCase.objects.filter(usuario=request.user, activo=True)
+                .select_related(
+                    'caso',
+                    'caso__estado',
+                    'caso__comunidad',
+                    'caso__tipo_caso',
+                )
+                .order_by('-fecha_creacion')
+            )
+            data = FollowedCaseSerializer(follows, many=True).data
+            return Response({'count': len(data), 'results': data})
+
+        case = self._get_followable_case(case_id)
+        follow = FollowedCase.objects.filter(usuario=request.user, caso=case).first()
+        return Response({
+            'id_caso': str(case.id),
+            'followed': bool(follow and follow.activo),
+            'detail': FollowedCaseSerializer(follow).data if follow else None,
+        })
+
+    @extend_schema(
+        summary="Seguir un caso (cuenta institucional)",
+        description=(
+            "Activa el seguimiento sobre un caso público aprobado o propio. "
+            "Si ya existía un seguimiento previo desactivado, lo reactiva. "
+            "Acepta el identificador en la URL o en el cuerpo JSON: {'caso': '{uuid}'}."
+        ),
+        responses={200: FollowedCaseSerializer},
+    )
+    def post(self, request, case_id=None):
+        target_id = case_id or request.data.get('caso') or request.data.get('id_caso') or request.data.get('case_id')
+        if not target_id:
+            raise ValidationError({'caso': 'Debe especificar el identificador del caso a seguir.'})
+        return self.put(request, target_id)
+
+    @extend_schema(
+        summary="Actualizar o activar seguimiento de un caso (cuenta institucional)",
+        responses={200: FollowedCaseSerializer},
+    )
+    def put(self, request, case_id):
+        case = self._get_followable_case(case_id)
+        follow, created = FollowedCase.objects.get_or_create(
+            usuario=request.user,
+            caso=case,
+            defaults={'activo': True},
+        )
+        if not created and not follow.activo:
+            follow.activo = True
+            follow.fecha_baja = None
+            follow.save(update_fields=['activo', 'fecha_baja'])
+        return Response(FollowedCaseSerializer(follow).data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary="Dejar de seguir un caso (desactivación lógica)",
+        description="Desactiva el seguimiento estableciendo activo=False y registrando fecha_baja. El registro se preserva para auditoría.",
+        responses={204: None},
+    )
+    def delete(self, request, case_id):
+        case = self._get_followable_case(case_id)
+        FollowedCase.objects.filter(usuario=request.user, caso=case, activo=True).update(
+            activo=False,
+            fecha_baja=timezone.now(),
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class CitizenDashboardView(APIView):
     """CIT-01: GET /api/v1/me/dashboard/ (y /api/v1/citizen/dashboard/)"""
     permission_classes = [IsCitizenOnly]
@@ -645,7 +736,12 @@ class AdminCaseCategoryViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminOrSuperAdmin]
 
 
-def apply_admin_case_filters(qs, params):
+def apply_admin_case_filters(qs, params, user=None):
+    if user and (created_by_me := (params.get('created_by_me') or params.get('mine') or params.get('creados_por_mi'))):
+        if str(created_by_me).strip().lower() in {'true', '1', 'yes'}:
+            qs = qs.filter(usuario=user)
+    if created_by := (params.get('created_by') or params.get('creado_por') or params.get('id_usuario')):
+        qs = qs.filter(usuario_id=created_by)
     if pub := (params.get('estado_publicacion') or params.get('moderation_status')):
         qs = qs.filter(estado_publicacion__iexact=pub)
     if est_id := params.get('id_estado'):
@@ -706,10 +802,41 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
             )
             .all()
         )
-        if not user.has_any_role(Role.Nombre.ADMINISTRADOR, Role.Nombre.MODERADOR):
-            qs = qs.filter(asignaciones__responsable=user, asignaciones__activo=True).distinct()
+        created_by_me = (
+            self.request.query_params.get('created_by_me')
+            or self.request.query_params.get('mine')
+            or self.request.query_params.get('creados_por_mi')
+        )
+        is_created_by_me = str(created_by_me).strip().lower() in {'true', '1', 'yes'}
 
-        return apply_admin_case_filters(qs, self.request.query_params)
+        if not user.has_any_role(Role.Nombre.ADMINISTRADOR, Role.Nombre.MODERADOR):
+            if is_created_by_me:
+                qs = qs.filter(usuario=user)
+            else:
+                qs = qs.filter(
+                    Q(asignaciones__responsable=user, asignaciones__activo=True) | Q(usuario=user)
+                ).distinct()
+
+        return apply_admin_case_filters(qs, self.request.query_params, user=user)
+
+    @extend_schema(
+        summary="Listar casos en el panel administrativo",
+        description=(
+            "Listado administrativo de casos. Permite filtrar por ?created_by_me=true "
+            "(o ?mine=true) para consultar los casos creados por la cuenta autenticada ('Mis Casos')."
+        ),
+        parameters=[
+            OpenApiParameter('created_by_me', OpenApiTypes.BOOL, OpenApiParameter.QUERY, required=False, description='Filtrar casos creados por el usuario autenticado (soporta alias mine=true).'),
+            OpenApiParameter('created_by', OpenApiTypes.UUID, OpenApiParameter.QUERY, required=False, description='Filtrar por UUID del usuario creador (soporta creado_por).'),
+            OpenApiParameter('estado_publicacion', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False, description='Estado de publicación: pendiente, aprobado, rechazado.'),
+            OpenApiParameter('id_estado', OpenApiTypes.UUID, OpenApiParameter.QUERY, required=False, description='UUID del estado de gestión.'),
+            OpenApiParameter('estado', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False, description='Nombre del estado de gestión.'),
+            OpenApiParameter('prioridad', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False, description='Prioridad: baja, media, alta, critica.'),
+            OpenApiParameter('search', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False, description='Búsqueda textual por código, título o descripción.'),
+        ],
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
 
     def get_object(self):
         lookup = self.kwargs.get(self.lookup_field)
@@ -721,7 +848,16 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
         """Sección 14: Radicación institucional POST /api/v1/admin/cases/"""
         AuditService.set_db_actor_session(self.request.user)
         reporter = serializer.validated_data.get('usuario') or self.request.user
-        serializer.save(usuario=reporter)
+        case = serializer.save(usuario=reporter)
+        AuditService.log(
+            actor=self.request.user,
+            action='insert',
+            module='casos',
+            target_model='casos',
+            target_id=case.pk,
+            description=f'Radicación administrativa de caso "{case.titulo}" ({case.codigo})',
+            request=self.request,
+        )
 
     @action(detail=True, methods=['get'], url_path='history')
     def history(self, request, pk=None):

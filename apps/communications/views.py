@@ -38,6 +38,7 @@ from apps.communications.serializers import (
     CaseCommentSerializer,
     CaseMessageSerializer,
     CommentModerationActionSerializer,
+    CommentModerationHistoryItemSerializer,
     EventProposalSerializer,
     HomeHeroSerializer,
     LegalDocumentSerializer,
@@ -416,6 +417,8 @@ class AdminCaseCommentModerationViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         summary='Consultar historial autorizado de decisiones de moderación de un comentario (P14)',
+        description='Retorna la lista de eventos de auditoría y decisiones de moderación tomadas sobre el comentario.',
+        responses={200: CommentModerationHistoryItemSerializer(many=True)},
     )
     @action(detail=True, methods=['get'], url_path='history')
     def history(self, request, pk=None):
@@ -437,15 +440,21 @@ class AdminCaseCommentModerationViewSet(viewsets.ModelViewSet):
                 'actor_id': str(log.usuario_id) if log.usuario_id else None,
                 'actor_nombre': log.usuario.full_name if log.usuario else 'Sistema',
                 'fecha': log.fecha_evento,
+                'decision': (log.datos_nuevos or {}).get('estado_moderacion') or 'actualizado',
                 'estado_anterior': (log.datos_anteriores or {}).get('estado_moderacion'),
                 'estado_nuevo': (log.datos_nuevos or {}).get('estado_moderacion'),
                 'motivo': (log.datos_nuevos or {}).get('motivo', ''),
-                'descripcion': log.descripcion,
+                'descripcion': f'Moderación de comentario: {log.accion}',
             })
+        page = self.paginate_queryset(items)
+        if page is not None:
+            return self.get_paginated_response(CommentModerationHistoryItemSerializer(page, many=True).data)
+        serialized = CommentModerationHistoryItemSerializer(items, many=True).data
         return Response({
             'comment_id': str(comment.id),
-            'count': len(items),
-            'history': items,
+            'count': len(serialized),
+            'results': serialized,
+            'history': serialized,
         })
 
 

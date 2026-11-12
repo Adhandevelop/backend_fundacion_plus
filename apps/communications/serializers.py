@@ -113,6 +113,18 @@ class CommentModerationActionSerializer(serializers.Serializer):
         return attrs
 
 
+class CommentModerationHistoryItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField(help_text='ID del evento de auditoría')
+    actor_id = serializers.UUIDField(allow_null=True, help_text='UUID del moderador o null si fue el sistema')
+    actor_nombre = serializers.CharField(help_text='Nombre completo del moderador')
+    fecha = serializers.DateTimeField(help_text='Fecha y hora en que se registró la decisión')
+    decision = serializers.CharField(help_text='Decisión tomada (nuevo estado de moderación)')
+    estado_anterior = serializers.CharField(allow_null=True, help_text='Estado de moderación previo')
+    estado_nuevo = serializers.CharField(help_text='Estado de moderación resultante')
+    motivo = serializers.CharField(allow_blank=True, help_text='Motivo registrado en la decisión')
+    descripcion = serializers.CharField(help_text='Descripción del evento de auditoría')
+
+
 class CaseMessageSerializer(serializers.ModelSerializer):
     id_mensaje = serializers.UUIDField(source='id', read_only=True)
     remitente_nombre = serializers.CharField(source='remitente.full_name', read_only=True)
