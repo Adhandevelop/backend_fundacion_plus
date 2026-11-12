@@ -194,10 +194,28 @@ class InitiativeCommunitySerializer(serializers.ModelSerializer):
 
 class InitiativeCaseLinkSerializer(serializers.ModelSerializer):
     caso_codigo = serializers.CharField(source='caso.codigo', read_only=True)
+    caso_titulo = serializers.CharField(source='caso.titulo', read_only=True)
+    caso_estado = serializers.CharField(source='caso.estado.nombre', read_only=True)
+    caso_comunidad = serializers.CharField(source='caso.comunidad.nombre', read_only=True)
+    caso_municipio = serializers.CharField(source='caso.comunidad.municipio.nombre', read_only=True)
+    caso_tipo = serializers.CharField(source='caso.tipo_caso.nombre', read_only=True)
 
     class Meta:
         model = InitiativeCaseLink
-        fields = ['id', 'edicion', 'caso', 'caso_codigo', 'tipo_vinculo', 'observaciones', 'fecha_vinculacion']
+        fields = [
+            'id',
+            'edicion',
+            'caso',
+            'caso_codigo',
+            'caso_titulo',
+            'caso_estado',
+            'caso_comunidad',
+            'caso_municipio',
+            'caso_tipo',
+            'tipo_vinculo',
+            'observaciones',
+            'fecha_vinculacion',
+        ]
 
 
 class InitiativeEditionSerializer(serializers.ModelSerializer):

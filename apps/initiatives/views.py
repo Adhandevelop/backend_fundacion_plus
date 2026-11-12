@@ -2,7 +2,7 @@ import uuid as uuid_lib
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema, inline_serializer
+from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema, inline_serializer
 from rest_framework import generics, permissions, serializers as drf_serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -12,6 +12,8 @@ from rest_framework.views import APIView
 
 from apps.accounts.permissions import IsEditorOrAdmin
 from apps.audit.services import AuditService
+from apps.cases.models import Case
+from apps.cases.serializers import PublicCaseListSerializer
 from apps.initiatives.models import (
     Initiative,
     InitiativeActivity,
@@ -501,9 +503,160 @@ class AdminInitiativeCommunityViewSet(viewsets.ModelViewSet):
 
 
 class AdminInitiativeCaseLinkViewSet(viewsets.ModelViewSet):
-    queryset = InitiativeCaseLink.objects.select_related('edicion', 'caso').all()
+    queryset = InitiativeCaseLink.objects.select_related(
+        'edicion',
+        'caso',
+        'caso__estado',
+        'caso__tipo_caso',
+        'caso__comunidad',
+        'caso__comunidad__municipio',
+    ).all()
     serializer_class = InitiativeCaseLinkSerializer
     permission_classes = [IsEditorOrAdmin]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        edicion = (
+            self.request.query_params.get('edicion')
+            or self.request.query_params.get('id_edicion')
+            or self.request.query_params.get('edition')
+        )
+        if edicion:
+            try:
+                uuid_val = uuid_lib.UUID(str(edicion).strip())
+                qs = qs.filter(edicion_id=uuid_val)
+            except (ValueError, TypeError):
+                raise ValidationError({'edicion': 'Identificador de edición inválido (debe ser UUID).'})
+
+        caso = (
+            self.request.query_params.get('caso')
+            or self.request.query_params.get('id_caso')
+            or self.request.query_params.get('case')
+        )
+        if caso:
+            try:
+                uuid_val = uuid_lib.UUID(str(caso).strip())
+                qs = qs.filter(caso_id=uuid_val)
+            except (ValueError, TypeError):
+                raise ValidationError({'caso': 'Identificador de caso inválido (debe ser UUID).'})
+
+        tipo_vinculo = self.request.query_params.get('tipo_vinculo')
+        if tipo_vinculo:
+            qs = qs.filter(tipo_vinculo=tipo_vinculo)
+
+        search = self.request.query_params.get('search') or self.request.query_params.get('q')
+        if search:
+            qs = qs.filter(
+                Q(caso__codigo__icontains=search)
+                | Q(caso__titulo__icontains=search)
+                | Q(observaciones__icontains=search)
+            )
+
+        return qs
+
+    @extend_schema(
+        summary="Listar vínculos entre ediciones de iniciativas y casos comunitarios",
+        description=(
+            "Permite listar vínculos entre ediciones de iniciativas y casos comunitarios. "
+            "Soporta filtros server-side por edición (?edicion={uuid}), "
+            "caso (?caso={uuid}), tipo de vínculo (?tipo_vinculo=...) y búsqueda por texto (?search=)."
+        ),
+        parameters=[
+            OpenApiParameter('edicion', OpenApiTypes.UUID, OpenApiParameter.QUERY, required=False, description='Filtrar por UUID de la edición de iniciativa (soporta alias id_edicion, edition).'),
+            OpenApiParameter('caso', OpenApiTypes.UUID, OpenApiParameter.QUERY, required=False, description='Filtrar por UUID del caso comunitario (soporta alias id_caso, case).'),
+            OpenApiParameter('tipo_vinculo', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False, description='Filtrar por tipo de vínculo (hallazgo, seguimiento, resultado, otro).'),
+            OpenApiParameter('search', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False, description='Búsqueda por código de caso, título o notas de observación.'),
+        ],
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @extend_schema(
+        summary="Listar casos aprobados candidatos para vincular a una edición",
+        description=(
+            "Retorna casos aprobados disponibles para vincular bajo permisos de gestión de iniciativas. "
+            "Si se proporciona el parámetro ?edicion={uuid}, excluye automáticamente los casos que ya están "
+            "vinculados a dicha edición. Soporta búsqueda por código, título o descripción (?search=) y paginación standard."
+        ),
+        parameters=[
+            OpenApiParameter('edicion', OpenApiTypes.UUID, OpenApiParameter.QUERY, required=False, description='UUID de la edición de iniciativa. Si se envía, excluye casos ya vinculados a esta edición.'),
+            OpenApiParameter('search', OpenApiTypes.STR, OpenApiParameter.QUERY, required=False, description='Búsqueda por código, título o descripción del caso.'),
+            OpenApiParameter('tipo_caso', OpenApiTypes.UUID, OpenApiParameter.QUERY, required=False, description='Filtrar por UUID de categoría/tipo de caso.'),
+            OpenApiParameter('comunidad', OpenApiTypes.UUID, OpenApiParameter.QUERY, required=False, description='Filtrar por UUID de la comunidad.'),
+            OpenApiParameter('municipio', OpenApiTypes.UUID, OpenApiParameter.QUERY, required=False, description='Filtrar por UUID del municipio.'),
+        ],
+        responses={200: PublicCaseListSerializer(many=True)},
+    )
+    @action(detail=False, methods=['get'], url_path='candidates')
+    def candidates(self, request):
+        qs = Case.objects.filter(
+            estado_publicacion=Case.EstadoPublicacion.APROBADO
+        ).select_related(
+            'tipo_caso',
+            'comunidad',
+            'comunidad__municipio',
+            'comunidad__municipio__departamento',
+            'estado',
+        )
+
+        edicion = (
+            request.query_params.get('edicion')
+            or request.query_params.get('id_edicion')
+            or request.query_params.get('edition')
+        )
+        if edicion:
+            try:
+                edicion_uuid = uuid_lib.UUID(str(edicion).strip())
+                qs = qs.exclude(iniciativas_vinculadas__edicion_id=edicion_uuid)
+            except (ValueError, TypeError):
+                raise ValidationError({'edicion': 'Identificador de edición inválido (debe ser UUID).'})
+
+        search = request.query_params.get('search') or request.query_params.get('q')
+        if search:
+            qs = qs.filter(
+                Q(codigo__icontains=search)
+                | Q(titulo__icontains=search)
+                | Q(descripcion__icontains=search)
+            )
+
+        tipo_caso = request.query_params.get('tipo_caso') or request.query_params.get('categoria')
+        if tipo_caso:
+            try:
+                tc_uuid = uuid_lib.UUID(str(tipo_caso).strip())
+                qs = qs.filter(tipo_caso_id=tc_uuid)
+            except (ValueError, TypeError):
+                qs = qs.filter(tipo_caso__nombre__icontains=tipo_caso)
+
+        comunidad = request.query_params.get('comunidad')
+        if comunidad:
+            try:
+                com_uuid = uuid_lib.UUID(str(comunidad).strip())
+                qs = qs.filter(comunidad_id=com_uuid)
+            except (ValueError, TypeError):
+                qs = qs.filter(comunidad__nombre__icontains=comunidad)
+
+        municipio = request.query_params.get('municipio')
+        if municipio:
+            try:
+                mun_uuid = uuid_lib.UUID(str(municipio).strip())
+                qs = qs.filter(comunidad__municipio_id=mun_uuid)
+            except (ValueError, TypeError):
+                qs = qs.filter(comunidad__municipio__nombre__icontains=municipio)
+
+        qs = qs.order_by('-fecha_creacion')
+
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = PublicCaseListSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = PublicCaseListSerializer(qs, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='eligible-cases')
+    def eligible_cases(self, request):
+        """Alias de candidates para máxima compatibilidad."""
+        return self.candidates(request)
 
     def perform_create(self, serializer):
         AuditService.set_db_actor_session(self.request.user)

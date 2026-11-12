@@ -11,6 +11,7 @@ from apps.initiatives.models import (
     InitiativeActivity,
     InitiativeCaseLink,
     InitiativeCommunity,
+    InitiativeEdition,
     InitiativeMedia,
     InitiativeMetric,
 )
@@ -527,3 +528,128 @@ class CasesMapAndPlatformIntegrationTests(APITestCase):
         self.assertEqual(aud_resp.status_code, status.HTTP_200_OK)
         self.assertIn('kpis', aud_resp.data)
         self.assertGreaterEqual(aud_resp.data['count'], 1)
+
+    def test_p22_initiative_case_links_filters_and_candidates(self):
+        """
+        P22:
+        - GET /api/v1/admin/initiative-case-links/?edicion={uuid} filtra server-side por edición.
+        - GET /api/v1/admin/initiative-case-links/?caso={uuid} y ?tipo_vinculo=...
+        - GET /api/v1/admin/initiative-case-links/candidates/ lista casos aprobados con búsqueda y paginación.
+        - Si se pasa ?edicion={uuid}, excluye los casos ya vinculados a esa edición.
+        - Soporta alias ?id_edicion= y action /eligible-cases/.
+        """
+        self.client.force_authenticate(user=self.admin)
+
+        # Crear iniciativa y dos ediciones
+        init_resp = self.client.post(
+            '/api/v1/admin/initiatives/',
+            {
+                'titulo': 'Iniciativa P22 Test',
+                'subtitulo': 'Subtítulo',
+                'descripcion_corta': 'Corta',
+                'descripcion': 'Larga',
+                'categoria': 'Comunitaria',
+                'estado': 'en_curso',
+                'estado_publicacion': 'publicada',
+            },
+            format='json',
+        )
+        self.assertEqual(init_resp.status_code, status.HTTP_201_CREATED)
+        initiative = Initiative.objects.get(pk=init_resp.data['id'])
+        edicion_1 = initiative.get_or_create_current_edition()
+        edicion_2 = InitiativeEdition.objects.create(
+            iniciativa=initiative,
+            anio=2027,
+            nombre_edicion='Edición 2027',
+            descripcion='Segunda edición',
+        )
+
+        # Crear dos casos aprobados
+        caso_1 = Case.objects.create(
+            usuario=self.citizen,
+            tipo_caso=self.category,
+            comunidad=self.community,
+            estado=CaseStatus.get_by_name('en_proceso'),
+            titulo='Caso Pavimentación Calle 5',
+            descripcion='Detalles de pavimentación requerida.',
+            estado_publicacion=Case.EstadoPublicacion.APROBADO,
+        )
+        caso_2 = Case.objects.create(
+            usuario=self.other_citizen,
+            tipo_caso=self.category,
+            comunidad=self.community,
+            estado=CaseStatus.get_by_name('en_proceso'),
+            titulo='Caso Parque La Esperanza',
+            descripcion='Recuperación de juegos infantiles.',
+            estado_publicacion=Case.EstadoPublicacion.APROBADO,
+        )
+
+        # Vincular caso_1 a edicion_1
+        link_resp = self.client.post(
+            '/api/v1/admin/initiative-case-links/',
+            {
+                'edicion': str(edicion_1.id),
+                'caso': str(caso_1.id),
+                'tipo_vinculo': 'hallazgo',
+                'observaciones': 'Detectado en visita técnica preliminar.',
+            },
+            format='json',
+        )
+        self.assertEqual(link_resp.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(link_resp.data['caso_codigo'], caso_1.codigo)
+        self.assertEqual(link_resp.data['caso_titulo'], 'Caso Pavimentación Calle 5')
+
+        # 1. Filtro por edicion (edicion_1 debe traer 1, edicion_2 debe traer 0)
+        list_e1 = self.client.get(f'/api/v1/admin/initiative-case-links/?edicion={edicion_1.id}')
+        self.assertEqual(list_e1.status_code, status.HTTP_200_OK)
+        results_e1 = list_e1.data.get('results', list_e1.data)
+        self.assertEqual(len(results_e1), 1)
+        self.assertEqual(results_e1[0]['caso'], caso_1.id)
+
+        # Alias id_edicion
+        list_alias = self.client.get(f'/api/v1/admin/initiative-case-links/?id_edicion={edicion_1.id}')
+        self.assertEqual(list_alias.status_code, status.HTTP_200_OK)
+        results_alias = list_alias.data.get('results', list_alias.data)
+        self.assertEqual(len(results_alias), 1)
+
+        # Filtro con edicion_2 (vacío)
+        list_e2 = self.client.get(f'/api/v1/admin/initiative-case-links/?edicion={edicion_2.id}')
+        self.assertEqual(list_e2.status_code, status.HTTP_200_OK)
+        results_e2 = list_e2.data.get('results', list_e2.data)
+        self.assertEqual(len(results_e2), 0)
+
+        # Error de validación con UUID inválido
+        list_err = self.client.get('/api/v1/admin/initiative-case-links/?edicion=invalid-uuid')
+        self.assertEqual(list_err.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 2. Endpoint de candidatos (/candidates/):
+        # Sin edicion, debe listar ambos casos aprobados
+        cand_all = self.client.get('/api/v1/admin/initiative-case-links/candidates/')
+        self.assertEqual(cand_all.status_code, status.HTTP_200_OK)
+        results_all = cand_all.data.get('results', cand_all.data)
+        cand_all_ids = [str(c['id']) for c in results_all]
+        self.assertIn(str(caso_1.id), cand_all_ids)
+        self.assertIn(str(caso_2.id), cand_all_ids)
+
+        # Con ?edicion={edicion_1.id}, debe excluir caso_1 y listar caso_2
+        cand_e1 = self.client.get(f'/api/v1/admin/initiative-case-links/candidates/?edicion={edicion_1.id}')
+        self.assertEqual(cand_e1.status_code, status.HTTP_200_OK)
+        results_cand_e1 = cand_e1.data.get('results', cand_e1.data)
+        cand_e1_ids = [str(c['id']) for c in results_cand_e1]
+        self.assertNotIn(str(caso_1.id), cand_e1_ids)
+        self.assertIn(str(caso_2.id), cand_e1_ids)
+
+        # Búsqueda textual ?search=Esperanza
+        cand_search = self.client.get(f'/api/v1/admin/initiative-case-links/candidates/?edicion={edicion_1.id}&search=Esperanza')
+        self.assertEqual(cand_search.status_code, status.HTTP_200_OK)
+        results_search = cand_search.data.get('results', cand_search.data)
+        self.assertEqual(len(results_search), 1)
+        self.assertEqual(results_search[0]['id'], str(caso_2.id))
+
+        # Alias /eligible-cases/
+        cand_alias = self.client.get(f'/api/v1/admin/initiative-case-links/eligible-cases/?edicion={edicion_1.id}')
+        self.assertEqual(cand_alias.status_code, status.HTTP_200_OK)
+        results_cand_alias = cand_alias.data.get('results', cand_alias.data)
+        cand_alias_ids = [str(c['id']) for c in results_cand_alias]
+        self.assertNotIn(str(caso_1.id), cand_alias_ids)
+        self.assertIn(str(caso_2.id), cand_alias_ids)
