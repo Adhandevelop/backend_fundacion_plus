@@ -780,4 +780,25 @@ class AdditionalIntegrationPointsTests(APITestCase):
         self.assertIn('results', res.data)
         self.assertIn('kpis', res.data)
 
+    def test_p20_initiative_editorial_lifecycle_and_subresource_audit(self):
+        from apps.initiatives.models import Initiative
+        self.client.force_authenticate(user=self.admin)
+        ini = Initiative.objects.create(
+            titulo='Programa Prueba P20',
+            slug='programa-prueba-p20',
+            creador=self.admin,
+            estado_publicacion=Initiative.EstadoPublicacion.BORRADOR,
+        )
+        # 1. Publicar mediante acción atómica
+        res_pub = self.client.post(f'/api/v1/admin/initiatives/{ini.id}/publish/')
+        self.assertEqual(res_pub.status_code, status.HTTP_200_OK)
+        ini.refresh_from_db()
+        self.assertEqual(ini.estado_publicacion, Initiative.EstadoPublicacion.PUBLICADA)
+
+        # 2. Archivar mediante acción atómica
+        res_arch = self.client.post(f'/api/v1/admin/initiatives/{ini.id}/archive/')
+        self.assertEqual(res_arch.status_code, status.HTTP_200_OK)
+        ini.refresh_from_db()
+        self.assertEqual(ini.estado, Initiative.Estado.FINALIZADA)
+
 
