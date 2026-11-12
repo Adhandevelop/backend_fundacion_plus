@@ -801,4 +801,101 @@ class AdditionalIntegrationPointsTests(APITestCase):
         ini.refresh_from_db()
         self.assertEqual(ini.estado, Initiative.Estado.FINALIZADA)
 
+    def test_p21_multipart_media_upload_news_and_initiatives(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from apps.news.models import NewsArticle, NewsCategory
+        from apps.initiatives.models import Initiative
+
+        self.client.force_authenticate(user=self.admin)
+        cat = NewsCategory.objects.create(nombre='Categoría P21', slug='cat-p21')
+        article = NewsArticle.objects.create(
+            titulo='Noticia Multimedia P21',
+            slug='noticia-multimedia-p21',
+            extracto='Extracto',
+            contenido='Contenido',
+            autor=self.admin,
+            categoria=cat,
+        )
+        ini = Initiative.objects.create(
+            titulo='Iniciativa Multimedia P21',
+            slug='iniciativa-multimedia-p21',
+            creador=self.admin,
+        )
+
+        valid_jpg = SimpleUploadedFile(
+            'foto_campo.jpg',
+            b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00\x60\x00\x60\x00\x00\xff\xdb\x00C\x00',
+            content_type='image/jpeg',
+        )
+
+        # 1. Subida válida a noticias SIN enviar ruta_archivo
+        res_news = self.client.post(
+            '/api/v1/admin/news-media/',
+            {
+                'noticia': str(article.id),
+                'file': valid_jpg,
+                'texto_alternativo': 'Foto comunitaria',
+                'es_portada': True,
+            },
+            format='multipart',
+        )
+        self.assertEqual(res_news.status_code, status.HTTP_201_CREATED)
+        self.assertIn('id', res_news.data)
+        self.assertIn('ruta_archivo', res_news.data)
+        self.assertTrue(res_news.data['ruta_archivo'].startswith('news/'))
+        self.assertIn('url', res_news.data)
+        self.assertIn('/api/v1/public/media/news/', res_news.data['url'])
+
+        # 2. Subida válida a iniciativas SIN enviar ruta_archivo
+        valid_png = SimpleUploadedFile(
+            'grafico_avance.png',
+            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + b'0' * 50,
+            content_type='image/png',
+        )
+        res_ini = self.client.post(
+            '/api/v1/admin/initiative-media/',
+            {
+                'iniciativa': str(ini.id),
+                'file': valid_png,
+                'texto_alternativo': 'Gráfico de avance',
+                'es_portada': True,
+            },
+            format='multipart',
+        )
+        self.assertEqual(res_ini.status_code, status.HTTP_201_CREATED)
+        self.assertIn('id', res_ini.data)
+        self.assertIn('ruta_archivo', res_ini.data)
+        self.assertTrue(res_ini.data['ruta_archivo'].startswith('initiatives/'))
+        self.assertIn('url', res_ini.data)
+        self.assertIn('/api/v1/public/media/initiatives/', res_ini.data['url'])
+
+        # 3. Formato no permitido (.exe o .txt)
+        bad_file = SimpleUploadedFile('script.exe', b'MZ12345', content_type='application/x-msdownload')
+        res_bad = self.client.post(
+            '/api/v1/admin/news-media/',
+            {'noticia': str(article.id), 'file': bad_file},
+            format='multipart',
+        )
+        self.assertEqual(res_bad.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('file', str(res_bad.data))
+
+        # 4. Archivo mayor a 15 MB
+        big_file = SimpleUploadedFile('pesado.jpg', b'0' * (15 * 1024 * 1024 + 10), content_type='image/jpeg')
+        res_big = self.client.post(
+            '/api/v1/admin/news-media/',
+            {'noticia': str(article.id), 'file': big_file},
+            format='multipart',
+        )
+        self.assertEqual(res_big.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('15 MB', str(res_big.data))
+
+        # 5. Petición sin archivo ni ruta_archivo
+        res_empty = self.client.post(
+            '/api/v1/admin/news-media/',
+            {'noticia': str(article.id), 'texto_alternativo': 'Sin archivo'},
+            format='multipart',
+        )
+        self.assertEqual(res_empty.status_code, status.HTTP_400_BAD_REQUEST)
+
+
 

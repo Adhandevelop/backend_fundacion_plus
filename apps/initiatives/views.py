@@ -391,24 +391,9 @@ class AdminInitiativeMediaViewSet(viewsets.ModelViewSet):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def perform_create(self, serializer):
-        """P20: Carga multipart con validación binaria para medios de iniciativas."""
+        """P20 y P21: Carga multipart con validación binaria y sanitización en serializer."""
         AuditService.set_db_actor_session(self.request.user)
-        uploaded_file = self.request.FILES.get('file') or self.request.FILES.get('archivo')
-        if uploaded_file:
-            import os
-            from django.core.files.storage import default_storage
-            ext = os.path.splitext(uploaded_file.name)[1].lower()
-            if ext not in ('.jpg', '.jpeg', '.png', '.webp', '.mp4', '.pdf'):
-                raise ValidationError({'file': 'Formato no permitido. Use JPG, PNG, WEBP, MP4 o PDF.'})
-            if uploaded_file.size > 15 * 1024 * 1024:
-                raise ValidationError({'file': 'El archivo excede el tamaño máximo permitido (15MB).'})
-            iniciativa_id = self.request.data.get('iniciativa') or getattr(serializer.validated_data.get('iniciativa'), 'id', 'general')
-            save_name = f'initiatives/{iniciativa_id}/{uploaded_file.name}'
-            saved_path = default_storage.save(save_name, uploaded_file)
-            media = serializer.save(ruta_archivo=saved_path)
-        else:
-            media = serializer.save()
-
+        media = serializer.save()
         AuditService.log(
             actor=self.request.user,
             action='insert',

@@ -1,3 +1,7 @@
+import os
+import re
+import uuid
+from django.core.files.storage import default_storage
 from rest_framework import serializers
 from apps.initiatives.models import (
     Initiative,
@@ -39,7 +43,13 @@ class InitiativeMetricSerializer(serializers.ModelSerializer):
 
 
 class InitiativeMediaSerializer(serializers.ModelSerializer):
+    """P21: Soporte completo multipart/form-data con validación binaria, sanitización y URL pública."""
     id_multimedia = serializers.UUIDField(source='id', read_only=True)
+    file = serializers.FileField(write_only=True, required=False)
+    archivo = serializers.FileField(write_only=True, required=False)
+    ruta_archivo = serializers.CharField(required=False, allow_blank=True)
+    url = serializers.SerializerMethodField(read_only=True)
+    url_archivo = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = InitiativeMedia
@@ -49,14 +59,102 @@ class InitiativeMediaSerializer(serializers.ModelSerializer):
             'iniciativa',
             'edicion',
             'tipo',
+            'file',
+            'archivo',
             'ruta_archivo',
+            'url',
+            'url_archivo',
             'texto_alternativo',
             'descripcion',
             'es_portada',
             'orden',
             'fecha_subida',
         ]
-        read_only_fields = ['id', 'id_multimedia', 'fecha_subida']
+        read_only_fields = ['id', 'id_multimedia', 'fecha_subida', 'url', 'url_archivo']
+
+    def get_url(self, obj) -> str:
+        if not obj.ruta_archivo:
+            return ''
+        request = self.context.get('request')
+        path = f'/api/v1/public/media/{obj.ruta_archivo.lstrip("/")}'
+        return request.build_absolute_uri(path) if request else path
+
+    def get_url_archivo(self, obj) -> str:
+        return self.get_url(obj)
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        uploaded = (
+            attrs.pop('file', None)
+            or attrs.pop('archivo', None)
+            or (request.FILES.get('file') if request else None)
+            or (request.FILES.get('archivo') if request else None)
+        )
+        ruta = attrs.get('ruta_archivo') or (self.instance.ruta_archivo if self.instance else None)
+
+        if not uploaded and not ruta:
+            raise serializers.ValidationError(
+                {'file': 'Debes enviar un archivo mediante "file" o proporcionar "ruta_archivo".'}
+            )
+
+        if uploaded:
+            clean_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', os.path.basename(uploaded.name))
+            ext = os.path.splitext(clean_name)[1].lower()
+            allowed_exts = {
+                '.jpg': InitiativeMedia.Tipo.IMAGEN,
+                '.jpeg': InitiativeMedia.Tipo.IMAGEN,
+                '.png': InitiativeMedia.Tipo.IMAGEN,
+                '.webp': InitiativeMedia.Tipo.IMAGEN,
+                '.gif': InitiativeMedia.Tipo.IMAGEN,
+                '.mp4': InitiativeMedia.Tipo.VIDEO,
+                '.mov': InitiativeMedia.Tipo.VIDEO,
+                '.webm': InitiativeMedia.Tipo.VIDEO,
+                '.pdf': InitiativeMedia.Tipo.DOCUMENTO,
+            }
+            if ext not in allowed_exts:
+                raise serializers.ValidationError(
+                    {'file': f'Formato no permitido ({ext}). Formatos válidos: JPG, PNG, WEBP, MP4, PDF.'}
+                )
+            if uploaded.size > 15 * 1024 * 1024:
+                raise serializers.ValidationError(
+                    {'file': 'El archivo supera el tamaño máximo permitido de 15 MB.'}
+                )
+
+            # Auto-inferir tipo si no fue especificado
+            if not attrs.get('tipo'):
+                attrs['tipo'] = allowed_exts[ext]
+
+            iniciativa = attrs.get('iniciativa') or (self.instance.iniciativa if self.instance else None)
+            ini_id = str(iniciativa.id) if iniciativa else 'general'
+            short_id = uuid.uuid4().hex[:8]
+            safe_filename = f"{os.path.splitext(clean_name)[0]}_{short_id}{ext}"
+            save_path = f"initiatives/{ini_id}/{safe_filename}"
+            saved = default_storage.save(save_path, uploaded)
+            attrs['ruta_archivo'] = saved
+
+        # Validar regla de base de datos ck_portada_imagen: (NOT es_portada OR tipo = 'imagen')
+        if attrs.get('es_portada') and attrs.get('tipo', getattr(self.instance, 'tipo', None)) != InitiativeMedia.Tipo.IMAGEN:
+            raise serializers.ValidationError(
+                {'es_portada': 'Solo los archivos de tipo imagen pueden marcarse como portada.'}
+            )
+
+        # Validar que si se envía edición, pertenezca a la iniciativa
+        edicion = attrs.get('edicion')
+        iniciativa = attrs.get('iniciativa') or (self.instance.iniciativa if self.instance else None)
+        if edicion and iniciativa and edicion.iniciativa_id != iniciativa.id:
+            raise serializers.ValidationError(
+                {'edicion': 'La edición seleccionada no pertenece a la iniciativa especificada.'}
+            )
+
+        return attrs
+
+    def create(self, validated_data):
+        if validated_data.get('es_portada') and validated_data.get('iniciativa'):
+            InitiativeMedia.objects.filter(
+                iniciativa=validated_data['iniciativa'],
+                es_portada=True,
+            ).update(es_portada=False)
+        return super().create(validated_data)
 
 
 class InitiativeActivitySerializer(serializers.ModelSerializer):
