@@ -4,4 +4,5 @@ db.sqlite3
 endpoints.md
 media/news/
 media/cases/
+media/initiatives/
 media/site/hero/home_hero_*
