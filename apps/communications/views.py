@@ -444,6 +444,8 @@ class AdminCaseCommentModerationViewSet(viewsets.ModelViewSet):
                 'estado_anterior': (log.datos_anteriores or {}).get('estado_moderacion'),
                 'estado_nuevo': (log.datos_nuevos or {}).get('estado_moderacion'),
                 'motivo': (log.datos_nuevos or {}).get('motivo', ''),
+                'motivo_visible': (log.datos_nuevos or {}).get('motivo_visible') or (log.datos_nuevos or {}).get('motivo', ''),
+                'motivo_interno': (log.datos_nuevos or {}).get('motivo_interno') or (log.datos_nuevos or {}).get('nota_interna', ''),
                 'descripcion': f'Moderación de comentario: {log.accion}',
             })
         page = self.paginate_queryset(items)
@@ -456,6 +458,15 @@ class AdminCaseCommentModerationViewSet(viewsets.ModelViewSet):
             'results': serialized,
             'history': serialized,
         })
+
+    @extend_schema(
+        summary='Alias para consultar historial de decisiones de moderación de un comentario (P14)',
+        responses={200: CommentModerationHistoryItemSerializer(many=True)},
+    )
+    @action(detail=True, methods=['get'], url_path='moderation-history')
+    def moderation_history(self, request, pk=None):
+        """Alias compatible con GET /api/v1/admin/comments/{id}/moderation-history/"""
+        return self.history(request, pk=pk)
 
 
 class PublicEventProposalCreateView(generics.CreateAPIView):

@@ -73,15 +73,19 @@ CREATE INDEX IF NOT EXISTS ix_aportes_caso_fecha
     ON plus.aportes_caso (id_caso, fecha_creacion DESC);
 
 -- -----------------------------------------------------------------------------
--- AMP-07 y AMP-10: Asociación a aporte, audiencia, revisión y metadatos en plus.evidencias
+-- AMP-07, AMP-10 y P24: Asociación a aporte/seguimiento, audiencia, revisión y metadatos en plus.evidencias
 -- -----------------------------------------------------------------------------
 ALTER TABLE plus.evidencias
     ADD COLUMN IF NOT EXISTS id_aporte UUID NULL REFERENCES plus.aportes_caso(id_aporte) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS id_seguimiento UUID NULL REFERENCES plus.seguimientos(id_seguimiento) ON DELETE SET NULL,
     ADD COLUMN IF NOT EXISTS audiencia VARCHAR(20) NOT NULL DEFAULT 'ciudadano',
     ADD COLUMN IF NOT EXISTS estado_revision VARCHAR(20) NOT NULL DEFAULT 'pendiente',
     ADD COLUMN IF NOT EXISTS nombre_original VARCHAR(255) NULL,
     ADD COLUMN IF NOT EXISTS mime_type VARCHAR(100) NULL,
     ADD COLUMN IF NOT EXISTS tamano_bytes BIGINT NULL;
+
+CREATE INDEX IF NOT EXISTS ix_evidencias_seguimiento
+    ON plus.evidencias (id_seguimiento);
 
 -- -----------------------------------------------------------------------------
 -- AMP-03: Casos seguidos por ciudadanos (plus.casos_seguidos)

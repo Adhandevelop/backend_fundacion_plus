@@ -5,7 +5,7 @@ from rest_framework.test import APITestCase
 
 from apps.accounts.models import Role
 from apps.audit.models import AuditCase, AuditLog
-from apps.cases.models import Case, CaseCategory, CaseStatus, FollowedCase
+from apps.cases.models import Case, CaseCategory, CaseEvidence, CaseStatus, FollowedCase
 from apps.initiatives.models import (
     Initiative,
     InitiativeActivity,
@@ -933,3 +933,159 @@ class CasesMapAndPlatformIntegrationTests(APITestCase):
         self.assertEqual(hist_results[0]['decision'], 'aprobado')
         self.assertEqual(hist_results[0]['actor_nombre'], self.admin.full_name)
         self.assertEqual(hist_results[0]['motivo'], 'Aprobado tras revisión comunitaria.')
+
+        # Verificar alias GET /api/v1/admin/comments/{id}/moderation-history/
+        hist_alias = self.client.get(f'/api/v1/admin/comments/{comm.id}/moderation-history/')
+        self.assertEqual(hist_alias.status_code, status.HTTP_200_OK)
+
+    def test_p24_progress_with_evidence_attachments_and_linking(self):
+        """
+        P24: Validación de vinculación directa entre evidencias documentales (CaseEvidence)
+        y seguimientos/respuestas administrativas (CaseUpdate):
+        - Creación de avance con evidence_ids (JSON).
+        - Creación de avance con archivos binarios adjuntos (multipart/form-data).
+        - Respuestas con evidencias asociadas.
+        - Consulta de historial con evidencias bajo cada seguimiento.
+        - Regla de seguridad: evidencias no se hacen públicas solo por avance público.
+        """
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        self.client.force_authenticate(user=self.admin)
+
+        # 1. Crear un caso operativo
+        case = Case.objects.create(
+            usuario=self.citizen,
+            tipo_caso=self.category,
+            comunidad=self.community,
+            estado=CaseStatus.get_by_name('en_proceso'),
+            titulo='Caso P24 Flujo Documental',
+            descripcion='Verificación de seguimiento con evidencias vinculadas.',
+            estado_publicacion=Case.EstadoPublicacion.APROBADO,
+        )
+
+        # 2. Crear evidencia previa en el caso (sin seguimiento inicial)
+        ev_previa = CaseEvidence.objects.create(
+            caso=case,
+            usuario=self.admin,
+            tipo_archivo=CaseEvidence.TipoArchivo.DOCUMENTO,
+            ruta_archivo='cases/evidence/oficio_inicial.pdf',
+            nombre_original='Oficio_Secretaria_Inicial.pdf',
+            descripcion='Documento oficial radicado en ventanilla.',
+            audiencia=CaseEvidence.Audiencia.CIUDADANO,
+            estado_revision=CaseEvidence.EstadoRevision.APROBADA,
+        )
+        self.assertIsNone(ev_previa.seguimiento)
+
+        # 3. Registrar avance administrativo vía JSON vinculando evidence_ids
+        progress_json_resp = self.client.post(
+            f'/api/v1/admin/cases/{case.id}/progress/',
+            {
+                'titulo': 'Respuesta Oficial de la Secretaría',
+                'descripcion': 'Se recibió comunicación oficial del despacho.',
+                'audiencia': 'ciudadano',
+                'evidence_ids': [str(ev_previa.id)],
+            },
+            format='json',
+        )
+        self.assertEqual(progress_json_resp.status_code, status.HTTP_201_CREATED)
+        data_json = progress_json_resp.data
+        self.assertIn('id_seguimiento', data_json)
+        self.assertEqual(data_json['titulo'], 'Respuesta Oficial de la Secretaría')
+        self.assertEqual(data_json['audiencia'], 'ciudadano')
+        self.assertIn('evidencias', data_json)
+        self.assertEqual(len(data_json['evidencias']), 1)
+        self.assertEqual(data_json['evidencias'][0]['id_evidencia'], str(ev_previa.id))
+        self.assertEqual(data_json['evidencias'][0]['nombre_original'], 'Oficio_Secretaria_Inicial.pdf')
+        self.assertEqual(data_json['evidencias'][0]['audiencia'], 'ciudadano')
+
+        # Verificar en base de datos que se vinculó la FK seguimiento
+        ev_previa.refresh_from_db()
+        self.assertEqual(str(ev_previa.seguimiento_id), data_json['id_seguimiento'])
+
+        # 4. Registrar avance administrativo vía multipart/form-data con archivo adjunto
+        pdf_file = SimpleUploadedFile(
+            'Dictamen_Tecnico_Final.pdf',
+            b'%PDF-1.4 simulacion contenido pdf informe tecnico...',
+            content_type='application/pdf',
+        )
+        progress_multipart_resp = self.client.post(
+            f'/api/v1/admin/cases/{case.id}/progress/',
+            {
+                'titulo': 'Visita técnica y dictamen pericial',
+                'descripcion': 'Se anexa peritaje elaborado por la comisión.',
+                'audiencia': 'publico',
+                'files': [pdf_file],
+            },
+            format='multipart',
+        )
+        self.assertEqual(progress_multipart_resp.status_code, status.HTTP_201_CREATED)
+        data_multipart = progress_multipart_resp.data
+        self.assertIn('id_seguimiento', data_multipart)
+        self.assertEqual(data_multipart['titulo'], 'Visita técnica y dictamen pericial')
+        self.assertTrue(data_multipart['visible_publicamente'])
+        self.assertIn('evidencias', data_multipart)
+        self.assertEqual(len(data_multipart['evidencias']), 1)
+        ev_adjunta = data_multipart['evidencias'][0]
+        self.assertEqual(ev_adjunta['nombre_original'], 'Dictamen_Tecnico_Final.pdf')
+        self.assertEqual(ev_adjunta['tipo_archivo'], 'documento')
+        # Regla P24: aunque el avance sea público, la evidencia no se expone públicamente por defecto
+        self.assertEqual(ev_adjunta['audiencia'], 'ciudadano')
+
+        # 5. Probar alias compatible POST /api/v1/admin/cases/{id}/updates/
+        alias_resp = self.client.post(
+            f'/api/v1/admin/cases/{case.id}/updates/',
+            {
+                'titulo': 'Actualización complementaria',
+                'descripcion': 'Nota administrativa registrada mediante alias /updates/.',
+                'audiencia': 'interno',
+            },
+            format='json',
+        )
+        self.assertEqual(alias_resp.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(alias_resp.data['titulo'], 'Actualización complementaria')
+
+        # 6. Validar rechazo transaccional cuando evidence_ids contiene UUIDs inexistentes o de otro caso
+        bad_resp = self.client.post(
+            f'/api/v1/admin/cases/{case.id}/progress/',
+            {
+                'titulo': 'Intento con evidencia ajena',
+                'descripcion': 'Debe fallar con error descriptivo.',
+                'evidence_ids': ['11111111-2222-3333-4444-555555555555'],
+            },
+            format='json',
+        )
+        self.assertEqual(bad_resp.status_code, status.HTTP_400_BAD_REQUEST)
+        err_data = bad_resp.data.get('errors', bad_resp.data)
+        self.assertIn('evidence_ids', err_data)
+
+        # 7. Consultar historial administrativo GET /api/v1/admin/cases/{id}/history/
+        hist_resp = self.client.get(f'/api/v1/admin/cases/{case.id}/history/')
+        self.assertEqual(hist_resp.status_code, status.HTTP_200_OK)
+        seguimientos = hist_resp.data['seguimientos']
+        self.assertGreaterEqual(len(seguimientos), 3)
+        # Cada seguimiento devuelve 'evidencias' estructurado
+        for s in seguimientos:
+            self.assertIn('evidencias', s)
+            self.assertIsInstance(s['evidencias'], list)
+
+        # 8. Regla de visibilidad ciudadana vs pública
+        # Ciudadano autenticado dueño del caso: puede ver evidencias con audiencia 'ciudadano'
+        self.client.force_authenticate(user=self.citizen)
+        cit_hist = self.client.get(f'/api/v1/me/cases/{case.id}/history/')
+        self.assertEqual(cit_hist.status_code, status.HTTP_200_OK)
+        cit_segs = cit_hist.data['seguimientos']
+        # Buscar el seguimiento con la evidencia vinculada
+        seg_con_ev = next(s for s in cit_segs if s['id_seguimiento'] == data_json['id_seguimiento'])
+        self.assertEqual(len(seg_con_ev['evidencias']), 1)
+        self.assertEqual(seg_con_ev['evidencias'][0]['nombre_original'], 'Oficio_Secretaria_Inicial.pdf')
+
+        # Vista pública: solo ve evidencias públicas aprobadas, no las evidencias 'ciudadano'
+        self.client.force_authenticate(user=None)
+        pub_detail = self.client.get(f'/api/v1/public/cases/{case.id}/')
+        self.assertEqual(pub_detail.status_code, status.HTTP_200_OK)
+        pub_updates = pub_detail.data.get('seguimientos', [])
+        for pu in pub_updates:
+            # Ninguna evidencia interna o ciudadana debe filtrarse al público
+            for ev in pu.get('evidencias', []):
+                self.assertEqual(ev['audiencia'], 'publico')
+                self.assertEqual(ev['estado_revision'], 'aprobada')

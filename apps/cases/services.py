@@ -441,6 +441,10 @@ class CaseService:
         tipo_evento: str = CaseUpdate.TipoEvento.SEGUIMIENTO,
         visible_publicamente: bool = False,
         new_status: Optional[str] = None,
+        files=None,
+        evidence_ids=None,
+        evidence_description: Optional[str] = None,
+        evidence_audiencia: Optional[str] = None,
         request=None,
     ) -> CaseUpdate:
         is_reporter = case.usuario_id == author.id
@@ -468,6 +472,77 @@ class CaseService:
             tipo_evento=tipo_evento,
             visible_publicamente=(resolved_audiencia == CaseUpdate.Audiencia.PUBLICO),
         )
+
+        # P24: Vincular evidencias existentes proporcionadas por UUID
+        if evidence_ids:
+            str_ids = [str(eid) for eid in evidence_ids]
+            matched = case.evidencias.filter(id__in=str_ids)
+            found_ids = set(str(e.id) for e in matched)
+            missing_ids = [eid for eid in str_ids if eid not in found_ids]
+            if missing_ids:
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError({'evidence_ids': f'Las evidencias {missing_ids} no existen o no pertenecen a este caso.'})
+            matched.update(seguimiento=seguimiento)
+
+        # P24: Almacenar y vincular archivos binarios subidos directamente en el avance
+        if files:
+            import os
+            import uuid as uuid_lib
+            from django.core.files.storage import default_storage
+            from core.validators import validate_file_safety
+            from apps.cases.models import CaseEvidence
+
+            tipo_map = {
+                '.jpg': CaseEvidence.TipoArchivo.IMAGEN,
+                '.jpeg': CaseEvidence.TipoArchivo.IMAGEN,
+                '.png': CaseEvidence.TipoArchivo.IMAGEN,
+                '.webp': CaseEvidence.TipoArchivo.IMAGEN,
+                '.mp4': CaseEvidence.TipoArchivo.VIDEO,
+                '.mov': CaseEvidence.TipoArchivo.VIDEO,
+                '.webm': CaseEvidence.TipoArchivo.VIDEO,
+                '.mp3': CaseEvidence.TipoArchivo.AUDIO,
+                '.wav': CaseEvidence.TipoArchivo.AUDIO,
+                '.ogg': CaseEvidence.TipoArchivo.AUDIO,
+                '.pdf': CaseEvidence.TipoArchivo.DOCUMENTO,
+                '.doc': CaseEvidence.TipoArchivo.DOCUMENTO,
+                '.docx': CaseEvidence.TipoArchivo.DOCUMENTO,
+                '.xls': CaseEvidence.TipoArchivo.DOCUMENTO,
+                '.xlsx': CaseEvidence.TipoArchivo.DOCUMENTO,
+            }
+
+            if evidence_audiencia:
+                ev_aud = AUDIENCE_ALIASES.get(str(evidence_audiencia).upper(), str(evidence_audiencia).lower())
+                if ev_aud not in CaseEvidence.Audiencia.values:
+                    ev_aud = CaseEvidence.Audiencia.CIUDADANO
+            elif resolved_audiencia == CaseUpdate.Audiencia.INTERNO:
+                ev_aud = CaseEvidence.Audiencia.PRIVADO
+            else:
+                # Regla de seguridad P24: no hacer pública una evidencia por el solo hecho
+                # de que el seguimiento sea público, salvo especificación explícita.
+                ev_aud = CaseEvidence.Audiencia.CIUDADANO
+
+            for f in files:
+                validate_file_safety(f)
+                ext = os.path.splitext(f.name)[1].lower()
+                t_archivo = tipo_map.get(ext, CaseEvidence.TipoArchivo.DOCUMENTO)
+                clean_name = os.path.basename(f.name)[:255]
+                storage_path = f"cases/{case.codigo}/updates/{uuid_lib.uuid4().hex}_{clean_name}"
+                saved_path = default_storage.save(storage_path, f)
+
+                ev_desc = evidence_description or f"Adjunto a seguimiento: {titulo or descripcion[:60]}"
+                CaseEvidence.objects.create(
+                    caso=case,
+                    usuario=author,
+                    seguimiento=seguimiento,
+                    tipo_archivo=t_archivo,
+                    ruta_archivo=saved_path,
+                    descripcion=ev_desc,
+                    audiencia=ev_aud,
+                    estado_revision=CaseEvidence.EstadoRevision.PENDIENTE,
+                    nombre_original=clean_name,
+                    mime_type=getattr(f, 'content_type', None) or 'application/octet-stream',
+                    tamano_bytes=getattr(f, 'size', None),
+                )
 
         if new_status and can_manage:
             cls.change_management_status(

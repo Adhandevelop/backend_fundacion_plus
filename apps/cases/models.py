@@ -516,6 +516,14 @@ class CaseEvidence(models.Model):
         db_column='id_aporte',
         related_name='evidencias',
     )
+    seguimiento = models.ForeignKey(
+        'tracking.CaseUpdate',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_seguimiento',
+        related_name='evidencias',
+    )
     tipo_archivo = models.CharField(
         max_length=30,
         choices=TipoArchivo.choices,
@@ -546,11 +554,16 @@ class CaseEvidence(models.Model):
         ordering = ['-fecha_subida']
         indexes = [
             models.Index(fields=['caso'], name='ix_evidencias_caso'),
+            models.Index(fields=['seguimiento'], name='ix_evidencias_seguimiento'),
         ]
 
     @property
     def id_evidencia(self):
         return self.id
+
+    @property
+    def id_seguimiento(self):
+        return self.seguimiento_id
 
     def __str__(self):
         return f'Evidencia {self.tipo_archivo} en {self.caso.codigo}'

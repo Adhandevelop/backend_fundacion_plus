@@ -53,12 +53,13 @@ class CaseStatusSerializer(serializers.ModelSerializer):
 
 class CaseEvidenceSerializer(serializers.ModelSerializer):
     """
-    Serializador de evidencias de caso (CIT-06, ADM-05).
+    Serializador de evidencias de caso (CIT-06, ADM-05, P24).
     Soporta subida multipart mediante el campo `file` o `archivo` (máximo 15 MB; JPG, PNG, WEBP, PDF, MP4, MP3, DOC/X, XLS/X),
-    o referencia interna `ruta_archivo`.
+    o referencia interna `ruta_archivo`, y asociación opcional a `id_seguimiento`.
     """
     id_evidencia = serializers.UUIDField(source='id', read_only=True)
     id_aporte = serializers.UUIDField(source='aporte_id', read_only=True)
+    id_seguimiento = serializers.UUIDField(source='seguimiento_id', required=False, allow_null=True)
     usuario_nombre = serializers.CharField(source='usuario.full_name', read_only=True)
     download_url = serializers.SerializerMethodField()
     file = serializers.FileField(write_only=True, required=False)
@@ -73,6 +74,7 @@ class CaseEvidenceSerializer(serializers.ModelSerializer):
             'usuario',
             'usuario_nombre',
             'id_aporte',
+            'id_seguimiento',
             'file',
             'archivo',
             'tipo_archivo',
@@ -105,6 +107,11 @@ class CaseEvidenceSerializer(serializers.ModelSerializer):
         return f'/api/v1/me/cases/{obj.caso_id}/evidence/{obj.id}/download/'
 
     def validate(self, attrs):
+        if seg_id := attrs.get('seguimiento_id'):
+            from apps.tracking.models import CaseUpdate
+            if not CaseUpdate.objects.filter(pk=seg_id).exists():
+                raise serializers.ValidationError({'id_seguimiento': f'El seguimiento {seg_id} no existe.'})
+
         uploaded = attrs.pop('file', None) or attrs.pop('archivo', None)
         if uploaded:
             validate_file_safety(uploaded)
@@ -135,11 +142,23 @@ class CaseEvidenceSerializer(serializers.ModelSerializer):
 
 
 class CaseEvidenceUpdateSerializer(serializers.ModelSerializer):
-    """ADM-11 (AMP-10): PATCH /api/v1/admin/cases/{case_id}/evidence/{evidence_id}/"""
+    """ADM-11 (AMP-10, P24): PATCH /api/v1/admin/cases/{case_id}/evidence/{evidence_id}/"""
+    id_seguimiento = serializers.UUIDField(source='seguimiento_id', required=False, allow_null=True)
 
     class Meta:
         model = CaseEvidence
-        fields = ['descripcion', 'audiencia', 'estado_revision']
+        fields = ['descripcion', 'audiencia', 'estado_revision', 'id_seguimiento']
+
+    def validate_seguimiento_id(self, value):
+        if value is not None:
+            from apps.tracking.models import CaseUpdate
+            case_id = self.instance.caso_id if self.instance else None
+            qs = CaseUpdate.objects.filter(pk=value)
+            if case_id:
+                qs = qs.filter(caso_id=case_id)
+            if not qs.exists():
+                raise serializers.ValidationError(f'El seguimiento {value} no existe o no pertenece a este caso.')
+        return value
 
 
 class CaseCorrectionRequestSerializer(serializers.ModelSerializer):
@@ -684,6 +703,46 @@ class CaseUpdateCreateSerializer(serializers.Serializer):
     id_estado = serializers.CharField(required=False, allow_blank=True)
     estado = serializers.CharField(required=False, allow_blank=True)
 
+    # P24: Soporte para asociar evidencias por ID o subida multipart
+    evidence_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+        help_text='Lista de UUIDs de evidencias existentes del caso para asociar a este seguimiento.',
+    )
+    files = serializers.ListField(
+        child=serializers.FileField(),
+        required=False,
+        help_text='Archivos adjuntos para subir y asociar directamente a este seguimiento (multipart/form-data).',
+    )
+    archivos = serializers.ListField(
+        child=serializers.FileField(),
+        required=False,
+        help_text='Alias de files.',
+    )
+    file = serializers.FileField(required=False, help_text='Archivo único adjunto.')
+    archivo = serializers.FileField(required=False, help_text='Alias de file.')
+    evidence_description = serializers.CharField(required=False, allow_blank=True)
+    evidence_audiencia = serializers.CharField(required=False, allow_blank=True)
+
+    def to_internal_value(self, data):
+        # Permite parsing flexible de evidence_ids si viene serializado como string o repetido en multipart
+        mutable_data = data.copy() if hasattr(data, 'copy') else dict(data)
+        raw_evidence_ids = mutable_data.get('evidence_ids')
+        if isinstance(raw_evidence_ids, str):
+            raw_evidence_ids = raw_evidence_ids.strip()
+            if raw_evidence_ids.startswith('[') and raw_evidence_ids.endswith(']'):
+                import json
+                try:
+                    mutable_data['evidence_ids'] = json.loads(raw_evidence_ids)
+                except Exception:
+                    pass
+            elif ',' in raw_evidence_ids:
+                mutable_data['evidence_ids'] = [item.strip() for item in raw_evidence_ids.split(',') if item.strip()]
+            elif raw_evidence_ids:
+                mutable_data['evidence_ids'] = [raw_evidence_ids]
+        return super().to_internal_value(mutable_data)
+
     def validate(self, attrs):
         titulo = (attrs.get('titulo') or attrs.get('title') or '').strip() or None
         desc = attrs.get('descripcion') or attrs.get('content') or ''
@@ -697,6 +756,28 @@ class CaseUpdateCreateSerializer(serializers.Serializer):
         attrs['resolved_audiencia'] = aud
         attrs['resolved_visible'] = bool(attrs.get('visible_publicamente', False))
         attrs['resolved_new_status'] = attrs.get('id_estado') or attrs.get('estado') or None
+
+        # Consolidar archivos adjuntos desde campos de serializer o request.FILES
+        files_list = []
+        if 'files' in attrs and isinstance(attrs['files'], list):
+            files_list.extend(attrs['files'])
+        elif 'archivos' in attrs and isinstance(attrs['archivos'], list):
+            files_list.extend(attrs['archivos'])
+        elif 'file' in attrs and attrs['file']:
+            files_list.append(attrs['file'])
+        elif 'archivo' in attrs and attrs['archivo']:
+            files_list.append(attrs['archivo'])
+
+        if not files_list:
+            req = self.context.get('request')
+            if req and hasattr(req, 'FILES'):
+                req_files = req.FILES.getlist('files') or req.FILES.getlist('archivos')
+                if req_files:
+                    files_list.extend(req_files)
+                elif single_f := (req.FILES.get('file') or req.FILES.get('archivo')):
+                    files_list.append(single_f)
+
+        attrs['resolved_files'] = files_list
         return attrs
 
 

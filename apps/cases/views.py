@@ -10,6 +10,7 @@ from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema,
 from rest_framework import generics, permissions, serializers as drf_serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -601,7 +602,7 @@ class CitizenCaseViewSet(viewsets.ModelViewSet):
         return Response({
             'id_caso': str(case.id),
             'codigo': case.codigo,
-            'seguimientos': CaseUpdateSerializer(updates, many=True).data,
+            'seguimientos': CaseUpdateSerializer(updates, many=True, context={'request': request}).data,
             'historial_estados': PublicCaseStatusHistorySerializer(status_history, many=True).data,
             'aportes': CaseContributionSerializer(contributions, many=True).data,
             'solicitudes_correccion': [
@@ -866,7 +867,7 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
         return Response({
             'id_caso': str(case.id),
             'codigo': case.codigo,
-            'seguimientos': CaseUpdateSerializer(case.seguimientos.all(), many=True).data,
+            'seguimientos': CaseUpdateSerializer(case.seguimientos.all(), many=True, context={'request': request}).data,
             'historial_estados': CaseStatusHistorySerializer(case.historial_estados.all(), many=True).data,
             'asignaciones': [
                 {
@@ -1115,7 +1116,7 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
 
     def _handle_progress(self, request):
         case = self.get_object()
-        serializer = CaseUpdateCreateSerializer(data=request.data)
+        serializer = CaseUpdateCreateSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         seguimiento = CaseService.add_case_update(
             case=case,
@@ -1126,35 +1127,49 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
             tipo_evento=serializer.validated_data.get('tipo_evento', CaseUpdate.TipoEvento.SEGUIMIENTO),
             visible_publicamente=serializer.validated_data['resolved_visible'],
             new_status=serializer.validated_data['resolved_new_status'],
+            files=serializer.validated_data.get('resolved_files'),
+            evidence_ids=serializer.validated_data.get('evidence_ids'),
+            evidence_description=serializer.validated_data.get('evidence_description'),
+            evidence_audiencia=serializer.validated_data.get('evidence_audiencia'),
             request=request,
         )
-        return Response(CaseUpdateSerializer(seguimiento).data, status=status.HTTP_201_CREATED)
+        return Response(CaseUpdateSerializer(seguimiento, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
     @extend_schema(
         request=CaseUpdateCreateSerializer,
         responses={201: CaseUpdateSerializer},
-        summary='Registrar avance o seguimiento con nivel de audiencia (ADM-09)',
+        summary='Registrar avance o seguimiento con nivel de audiencia y evidencias adjuntas (ADM-09, P24)',
     )
-    @action(detail=True, methods=['post'], url_path='progress')
+    @action(detail=True, methods=['post'], url_path='progress', parser_classes=[MultiPartParser, FormParser, JSONParser])
     def progress(self, request, pk=None):
-        """ADM-09 (AMP-08): POST /api/v1/admin/cases/{case_id}/progress/"""
+        """ADM-09 (AMP-08, P24): POST /api/v1/admin/cases/{case_id}/progress/"""
         return self._handle_progress(request)
 
     @extend_schema(
         request=CaseUpdateCreateSerializer,
         responses={201: CaseUpdateSerializer},
-        summary='Alias compatible para registrar avance o seguimiento (ADM-09)',
+        summary='Alias compatible para registrar avance o seguimiento con evidencias (ADM-09, P24)',
     )
-    @action(detail=True, methods=['post'], url_path='updates')
+    @action(detail=True, methods=['post'], url_path='updates', parser_classes=[MultiPartParser, FormParser, JSONParser])
     def add_update(self, request, pk=None):
         """Alias compatible con POST /api/v1/admin/cases/{case_id}/updates/"""
         return self._handle_progress(request)
 
 
 class AdminCaseEvidenceViewSet(viewsets.ModelViewSet):
-    queryset = CaseEvidence.objects.select_related('caso', 'usuario').all()
+    queryset = CaseEvidence.objects.select_related('caso', 'usuario', 'seguimiento').all()
     serializer_class = CaseEvidenceSerializer
     permission_classes = [IsModeratorOrAdmin]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        params = self.request.query_params
+        if caso_id := params.get('caso') or params.get('id_caso'):
+            qs = qs.filter(caso_id=caso_id)
+        if seg_id := params.get('seguimiento') or params.get('id_seguimiento'):
+            qs = qs.filter(seguimiento_id=seg_id)
+        return qs
 
 
 class AdminCaseReportView(APIView):

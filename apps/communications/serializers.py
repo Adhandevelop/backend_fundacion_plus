@@ -122,6 +122,8 @@ class CommentModerationHistoryItemSerializer(serializers.Serializer):
     estado_anterior = serializers.CharField(allow_null=True, help_text='Estado de moderación previo')
     estado_nuevo = serializers.CharField(help_text='Estado de moderación resultante')
     motivo = serializers.CharField(allow_blank=True, help_text='Motivo registrado en la decisión')
+    motivo_visible = serializers.CharField(allow_blank=True, required=False, help_text='Motivo visible para el ciudadano')
+    motivo_interno = serializers.CharField(allow_blank=True, required=False, help_text='Motivo o nota interna para moderadores')
     descripcion = serializers.CharField(help_text='Descripción del evento de auditoría')
 
 
