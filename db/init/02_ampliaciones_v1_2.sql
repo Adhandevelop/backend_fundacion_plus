@@ -217,4 +217,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_noticia_portada_unica
     ON plus.noticia_multimedia (id_noticia)
     WHERE es_portada = TRUE;
 
+-- -----------------------------------------------------------------------------
+-- Configuraciones institucionales administrables (representante, cargo, sigla, misión)
+-- -----------------------------------------------------------------------------
+INSERT INTO plus.configuracion_plataforma (clave, valor)
+VALUES
+    ('institucion.sigla', to_jsonb('PLUS'::text)),
+    ('institucion.representante_nombre', to_jsonb('JUAN DAVID MARTINEZ BOLAÑO'::text)),
+    ('institucion.representante_cargo', to_jsonb('CEO de la Corporación Pluralismo Social'::text)),
+    ('institucion.mision', to_jsonb('Fortalecer la participación ciudadana, la veeduría social y el acompañamiento territorial de las comunidades mediante gestión transparente e iniciativas de impacto.'::text))
+ON CONFLICT (clave) DO NOTHING;
+
 COMMIT;

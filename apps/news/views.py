@@ -252,12 +252,15 @@ class PublicHomeSummaryView(APIView):
 
         default_institution = {
             'corporation_name': settings_map.get('institucion.nombre', 'Corporación Pluralismo Social'),
-            'acronym': 'PLUS',
-            'representative_name': 'Luis Alberto Muñoz Granada',
-            'representative_role': 'Representante Legal y Director Institucional',
-            'mission': (
-                'Fortalecer la participación ciudadana, la veeduría social y el acompañamiento '
-                'territorial de las comunidades mediante gestión transparente e iniciativas de impacto.'
+            'acronym': settings_map.get('institucion.sigla', 'PLUS'),
+            'representative_name': settings_map.get('institucion.representante_nombre', 'JUAN DAVID MARTINEZ BOLAÑO'),
+            'representative_role': settings_map.get('institucion.representante_cargo', 'CEO de la Corporación Pluralismo Social'),
+            'mission': settings_map.get(
+                'institucion.mision',
+                (
+                    'Fortalecer la participación ciudadana, la veeduría social y el acompañamiento '
+                    'territorial de las comunidades mediante gestión transparente e iniciativas de impacto.'
+                ),
             ),
         }
 

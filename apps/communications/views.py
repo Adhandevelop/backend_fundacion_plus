@@ -52,6 +52,10 @@ from apps.notifications.services import NotificationService
 
 PUBLIC_SITE_SETTING_KEYS = {
     'institucion.nombre',
+    'institucion.sigla',
+    'institucion.representante_nombre',
+    'institucion.representante_cargo',
+    'institucion.mision',
     'mapa.srid',
     'iniciativas.max_destacadas',
     'INSTITUTION_HERO',

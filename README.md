@@ -46,7 +46,7 @@ python manage.py test apps.accounts apps.cases -v 2
   - `POST /api/v1/auth/refresh/` — Renovación de token JWT.
   - `GET / PATCH /api/v1/auth/me/` — Perfil, roles y permisos del usuario autenticado.
 - **Portal Público (`/api/v1/public/`):**
-  - `GET /api/v1/public/home/` — Datos del Hero (Luis Alberto Muñoz Granada, PLUS), indicadores reales, iniciativas destacadas y noticias recientes.
+  - `GET /api/v1/public/home/` — Datos del Hero (JUAN DAVID MARTINEZ BOLAÑO, PLUS, configurables dinámicamente vía SiteSetting), indicadores reales, iniciativas destacadas y noticias recientes.
   - `GET /api/v1/public/cases/map/` — GeoJSON (`FeatureCollection`, SRID 4326) de casos aprobados para Leaflet (`?municipality=`, `?community=`, `?category=`, `?management_status=`, `?bbox=minLon,minLat,maxLon,maxLat`).
   - `GET /api/v1/public/cases/` y `GET /api/v1/public/cases/{radicado_code}/`
   - `GET /api/v1/public/initiatives/` y `GET /api/v1/public/initiatives/{slug}/`

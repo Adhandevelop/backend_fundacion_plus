@@ -355,6 +355,9 @@ class CasesMapAndPlatformIntegrationTests(APITestCase):
             '/media/initiatives/dulcemania_portada.jpg',
         )
         self.assertEqual(len(home_resp.data['recent_news']), 1)
+        self.assertEqual(home_resp.data['institution']['representative_name'], 'JUAN DAVID MARTINEZ BOLAÑO')
+        self.assertEqual(home_resp.data['institution']['representative_role'], 'CEO de la Corporación Pluralismo Social')
+        self.assertEqual(home_resp.data['institution']['acronym'], 'PLUS')
         self.assertGreaterEqual(AuditLog.objects.count(), 1)
 
     def test_endpoints_v1_2_expansions_and_contracts(self):
