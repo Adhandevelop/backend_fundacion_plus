@@ -1296,6 +1296,18 @@ class CasesMapAndPlatformIntegrationTests(APITestCase):
         self.assertAlmostEqual(audit_mod.datos_anteriores['coordenadas'][0], -73.626456, places=4)
         self.assertAlmostEqual(audit_mod.datos_nuevos['coordenadas'][0], -73.610000, places=4)
 
+        # 7.1 Verificar que GET /api/v1/admin/cases/{id}/ expone ubicacion, latitud, longitud, exact_latitude y exact_longitude
+        detail_resp = self.client.get(f'/api/v1/admin/cases/{case.id}/')
+        self.assertEqual(detail_resp.status_code, status.HTTP_200_OK)
+        det_data = detail_resp.data
+        self.assertIsNotNone(det_data['ubicacion'])
+        self.assertEqual(det_data['ubicacion']['type'], 'Point')
+        self.assertEqual(det_data['ubicacion']['srid'], 4326)
+        self.assertAlmostEqual(det_data['latitud'], 4.150000, places=4)
+        self.assertAlmostEqual(det_data['longitud'], -73.610000, places=4)
+        self.assertAlmostEqual(det_data['exact_latitude'], 4.150000, places=4)
+        self.assertAlmostEqual(det_data['exact_longitude'], -73.610000, places=4)
+
         # 8. Integración con mapa público: aparece inmediatamente en /public/cases/geojson/ y /public/cases/map/
         self.client.force_authenticate(user=None)
         geojson_map = self.client.get('/api/v1/public/cases/geojson/')

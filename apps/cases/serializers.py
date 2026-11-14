@@ -556,10 +556,11 @@ class AdminCaseDetailSerializer(serializers.ModelSerializer):
     historial_estados = CaseStatusHistorySerializer(many=True, read_only=True)
     evidencias = CaseEvidenceSerializer(many=True, read_only=True)
     allowed_actions = serializers.SerializerMethodField()
-    latitud = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, write_only=True)
-    longitud = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, write_only=True)
-    exact_latitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, write_only=True)
-    exact_longitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, write_only=True)
+    ubicacion = GeoPointField(required=False, allow_null=True)
+    latitud = serializers.SerializerMethodField()
+    longitud = serializers.SerializerMethodField()
+    exact_latitude = serializers.SerializerMethodField()
+    exact_longitude = serializers.SerializerMethodField()
 
     class Meta:
         model = Case
@@ -624,6 +625,29 @@ class AdminCaseDetailSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         user = getattr(request, 'user', None) if request else None
         return CaseService.get_allowed_actions(user, obj)
+
+    def to_internal_value(self, data):
+        ret = super().to_internal_value(data)
+        lat = data.get('latitud', data.get('exact_latitude'))
+        lon = data.get('longitud', data.get('exact_longitude'))
+        if lat is not None and lon is not None and not ret.get('ubicacion'):
+            try:
+                ret['ubicacion'] = GeoPointField().to_internal_value({'coordinates': [float(lon), float(lat)], 'srid': 4326})
+            except Exception as exc:
+                raise serializers.ValidationError({'ubicacion': str(exc)})
+        return ret
+
+    def get_latitud(self, obj) -> float | None:
+        return float(obj.exact_latitude) if obj.exact_latitude is not None else None
+
+    def get_longitud(self, obj) -> float | None:
+        return float(obj.exact_longitude) if obj.exact_longitude is not None else None
+
+    def get_exact_latitude(self, obj) -> float | None:
+        return float(obj.exact_latitude) if obj.exact_latitude is not None else None
+
+    def get_exact_longitude(self, obj) -> float | None:
+        return float(obj.exact_longitude) if obj.exact_longitude is not None else None
 
     def validate(self, attrs):
         if not self.instance and not attrs.get('estado'):
