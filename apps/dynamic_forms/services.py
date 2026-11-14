@@ -2,6 +2,7 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import secrets
 from datetime import timedelta
 from decimal import Decimal
@@ -28,6 +29,8 @@ from apps.dynamic_forms.validators import (
     validate_pregunta_codigo,
     validate_respuesta_contra_pregunta,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class FormularioService:
@@ -463,11 +466,12 @@ class FormularioNotificationService:
             estado=FormularioNotificacion.Estado.PENDIENTE,
         )
 
+        from_addr = getattr(settings, 'DEFAULT_FROM_EMAIL', None) or 'PLUS <notificaciones@fundacionplus.site>'
         try:
             send_mail(
                 subject=asunto,
                 message=cuerpo,
-                from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'contacto@plus.org'),
+                from_email=from_addr,
                 recipient_list=[correo],
                 fail_silently=False,
             )
@@ -479,6 +483,12 @@ class FormularioNotificationService:
             notif.error_mensaje = str(exc)[:500]
             notif.intentos += 1
             notif.save()
+            logger.error(
+                'Fallo de envío de notificación SMTP para formulario a %s: %s',
+                correo,
+                exc,
+                exc_info=True,
+            )
 
 
 class FormularioSubmissionService:

@@ -347,6 +347,7 @@ class PasswordResetRequestView(APIView):
         cooldown = int(getattr(settings, 'PASSWORD_RESET_COOLDOWN_SECONDS', 60) or 0)
         cache_key = f'pwd_reset_cooldown:{correo}'
         if cooldown > 0 and cache.get(cache_key):
+            logger.info('Solicitud de recuperación de contraseña en cooldown para correo: %s', correo)
             return Response(
                 {'message': self.GENERIC_MESSAGE, 'detail': self.GENERIC_MESSAGE},
                 status=status.HTTP_200_OK,
@@ -369,9 +370,11 @@ class PasswordResetRequestView(APIView):
                 )
             except Exception as exc:
                 logger.error(
-                    'Fallo de envío SMTP en recuperación de contraseña para usuario=%s (%s)',
+                    'Fallo de envío SMTP en recuperación de contraseña para usuario=%s (%s): %s',
                     user.pk,
                     exc.__class__.__name__,
+                    exc,
+                    exc_info=True,
                 )
                 AuditService.log_access(
                     actor=user,
@@ -380,6 +383,11 @@ class PasswordResetRequestView(APIView):
                     resultado='fallido',
                     request=request,
                 )
+        else:
+            logger.info(
+                'Solicitud de recuperación de contraseña para correo inexistente o usuario inactivo: %s',
+                correo,
+            )
 
         # Respuesta genérica sin revelar si el correo existe (regla AUTH-05)
         return Response(
