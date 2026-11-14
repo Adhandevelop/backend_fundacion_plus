@@ -377,6 +377,15 @@ class DynamicFormsModuleTests(APITestCase):
             tipo_campo=FormularioPregunta.TipoCampo.TEXTO_CORTO,
         )
 
+        from apps.communications.models import LegalAcceptance, LegalDocument
+        doc = LegalDocument.get_current('tratamiento_datos')
+        acceptance = LegalAcceptance.objects.create(
+            documento=doc,
+            version_aceptada='1.0',
+            finalidad='envio_formulario',
+            correo_declarado='carlos.prueba@plus.org',
+        )
+
         envio = FormularioEnvio.objects.create(
             formulario=form,
             version=version,
@@ -387,6 +396,7 @@ class DynamicFormsModuleTests(APITestCase):
             telefono_declarado='3119876543',
             tipo_documento_declarado='CC',
             numero_documento_declarado='1020304050',
+            aceptacion_legal=acceptance,
         )
 
         from apps.dynamic_forms.models import FormularioRespuesta
@@ -402,6 +412,8 @@ class DynamicFormsModuleTests(APITestCase):
         res_det = self.client.get(f'/api/v1/admin/forms/{form.id}/submissions/{envio.id}/')
         self.assertEqual(res_det.status_code, status.HTTP_200_OK)
         self.assertEqual(res_det.data['datos_identificacion_completos']['correo'], 'carlos.prueba@plus.org')
+        self.assertIsNotNone(res_det.data['aceptacion_legal'])
+        self.assertEqual(res_det.data['aceptacion_legal']['version_politica'], '1.0')
 
         # 2. Exportación CSV
         res_csv = self.client.get(f'/api/v1/admin/forms/{form.id}/submissions-export/?version=1')

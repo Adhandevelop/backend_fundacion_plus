@@ -282,26 +282,31 @@ class AdminFormularioSubmissionDetailSerializer(serializers.ModelSerializer):
 
     def get_formulario(self, obj) -> dict:
         return {
-            'id': obj.formulario.id,
+            'id': str(obj.formulario.id),
             'slug': obj.formulario.slug,
             'titulo': obj.formulario.titulo,
         }
 
     def get_datos_identificacion_completos(self, obj) -> dict:
         return {
-            'nombres': obj.nombres_declarados,
-            'apellidos': obj.apellidos_declarados,
-            'correo': obj.correo_declarado,
-            'telefono': obj.telefono_declarado,
-            'tipo_documento': obj.tipo_documento_declarado,
-            'numero_documento': obj.numero_documento_declarado,
+            'nombres': obj.nombres_declarados or '',
+            'apellidos': obj.apellidos_declarados or '',
+            'correo': obj.correo_declarado or '',
+            'telefono': obj.telefono_declarado or '',
+            'tipo_documento': obj.tipo_documento_declarado or '',
+            'numero_documento': obj.numero_documento_declarado or '',
         }
 
     def get_aceptacion_legal(self, obj) -> dict | None:
         if not obj.aceptacion_legal:
             return None
+        version_pol = (
+            getattr(obj.aceptacion_legal, 'version_aceptada', None)
+            or getattr(getattr(obj.aceptacion_legal, 'documento', None), 'version', None)
+            or '1.0'
+        )
         return {
-            'version_politica': obj.aceptacion_legal.version_documento,
+            'version_politica': str(version_pol),
             'fecha_aceptacion': obj.aceptacion_legal.fecha_aceptacion,
         }
 

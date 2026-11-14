@@ -210,7 +210,12 @@ class AdminFormularioViewSet(viewsets.ModelViewSet):
         formulario = self.get_object()
         try:
             sub_uuid = uuid.UUID(str(submission_id))
-            envio = get_object_or_404(FormularioEnvio, formulario=formulario, pk=sub_uuid)
+            envio = get_object_or_404(
+                FormularioEnvio.objects.select_related('formulario', 'version', 'aceptacion_legal')
+                .prefetch_related('respuestas'),
+                formulario=formulario,
+                pk=sub_uuid,
+            )
         except (ValueError, TypeError):
             raise ValidationError({'submission_id': 'El identificador de envío debe ser un UUID válido.'})
 
@@ -222,6 +227,7 @@ class AdminFormularioViewSet(viewsets.ModelViewSet):
             target_model='formulario_envios',
             target_id=envio.id,
             description=f'Consulta administrativa detallada de envío {envio.id} en formulario "{formulario.titulo}"',
+            request=request,
         )
 
         serializer = AdminFormularioSubmissionDetailSerializer(envio)
