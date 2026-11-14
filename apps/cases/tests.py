@@ -1161,3 +1161,167 @@ class CasesMapAndPlatformIntegrationTests(APITestCase):
         self.assertIsNotNone(repaired_feature)
         self.assertEqual(repaired_feature['geometry']['type'], 'Point')
 
+    def test_admin_case_patch_location_endpoint_specification(self):
+        """
+        Prueba completa del endpoint PATCH /api/v1/admin/cases/{case_id}/location/ según la especificación del frontend:
+        - Acceso por UUID y por código de radicado.
+        - Asignación de ubicación en caso sin coordenadas -> aparece en /public/cases/geojson/ y /public/cases/map/.
+        - Modificación de caso con coordenadas existentes.
+        - Validación: latitud o longitud incompleta -> 400.
+        - Validación: coordenadas fuera de rango -> 400.
+        - Validación: caso inexistente -> 404.
+        - Validación: usuario sin permisos (ciudadano) -> 403.
+        - Auditoría: registra datos_anteriores, datos_nuevos, evento 'case_location_updated' e IP.
+        - Dos casos con las mismas coordenadas se devuelven como 2 Features diferentes en el mapa.
+        """
+        # Crear caso inicial aprobado sin ubicación
+        case = Case.objects.create(
+            codigo='PLUS-2026-00006',
+            titulo='Caso para especificación de actualización de ubicación',
+            descripcion='Verificación del endpoint /admin/cases/{id}/location/',
+            tipo_caso=self.category,
+            comunidad=self.community,
+            estado=CaseStatus.get_by_name('pendiente'),
+            usuario=self.citizen,
+            estado_publicacion='aprobado',
+            ubicacion=None,
+        )
+
+        # 1. Usuario sin permisos (ciudadano) intenta modificar ubicación -> 403
+        self.client.force_authenticate(user=self.citizen)
+        unauth_resp = self.client.patch(
+            f'/api/v1/admin/cases/{case.id}/location/',
+            {'latitud': 4.142123, 'longitud': -73.626456},
+            format='json',
+        )
+        self.assertEqual(unauth_resp.status_code, status.HTTP_403_FORBIDDEN)
+
+        # 2. Caso inexistente por UUID y por radicado -> 404
+        self.client.force_authenticate(user=self.admin)
+        not_found_uuid = self.client.patch(
+            '/api/v1/admin/cases/00000000-0000-0000-0000-000000000000/location/',
+            {'latitud': 4.142123, 'longitud': -73.626456},
+            format='json',
+        )
+        self.assertEqual(not_found_uuid.status_code, status.HTTP_404_NOT_FOUND)
+
+        not_found_ref = self.client.patch(
+            '/api/v1/admin/cases/PLUS-INEXISTENTE-99999/location/',
+            {'latitud': 4.142123, 'longitud': -73.626456},
+            format='json',
+        )
+        self.assertEqual(not_found_ref.status_code, status.HTTP_404_NOT_FOUND)
+
+        # 3. Validación: latitud o longitud incompleta -> 400
+        inc_lat = self.client.patch(
+            f'/api/v1/admin/cases/{case.id}/location/',
+            {'latitud': 4.142123},
+            format='json',
+        )
+        self.assertEqual(inc_lat.status_code, status.HTTP_400_BAD_REQUEST)
+
+        inc_lon = self.client.patch(
+            f'/api/v1/admin/cases/{case.id}/location/',
+            {'longitud': -73.626456},
+            format='json',
+        )
+        self.assertEqual(inc_lon.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 4. Validación: coordenadas fuera de rango -> 400
+        out_of_range = self.client.patch(
+            f'/api/v1/admin/cases/{case.id}/location/',
+            {'latitud': 95.0, 'longitud': -73.626456},
+            format='json',
+        )
+        self.assertEqual(out_of_range.status_code, status.HTTP_400_BAD_REQUEST)
+
+        outside_colombia = self.client.patch(
+            f'/api/v1/admin/cases/{case.id}/location/',
+            {'latitud': 48.8566, 'longitud': 2.3522},  # París
+            format='json',
+        )
+        self.assertEqual(outside_colombia.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 5. Actualización exitosa mediante código de radicado (PLUS-2026-00006)
+        AuditLog.objects.filter(id_registro=case.id).delete()
+        ok_patch_ref = self.client.patch(
+            f'/api/v1/admin/cases/PLUS-2026-00006/location/',
+            {
+                'latitud': 4.142123,
+                'longitud': -73.626456,
+            },
+            format='json',
+            HTTP_X_FORWARDED_FOR='190.24.12.85',
+        )
+        self.assertEqual(ok_patch_ref.status_code, status.HTTP_200_OK)
+        data_resp = ok_patch_ref.data
+        self.assertEqual(data_resp['id_caso'], str(case.id))
+        self.assertEqual(data_resp['codigo'], 'PLUS-2026-00006')
+        self.assertAlmostEqual(data_resp['latitud'], 4.142123, places=5)
+        self.assertAlmostEqual(data_resp['longitud'], -73.626456, places=5)
+        self.assertEqual(data_resp['ubicacion']['type'], 'Point')
+        self.assertEqual(data_resp['ubicacion']['srid'], 4326)
+        self.assertAlmostEqual(data_resp['ubicacion']['coordinates'][0], -73.626456, places=5)
+        self.assertAlmostEqual(data_resp['ubicacion']['coordinates'][1], 4.142123, places=5)
+        self.assertIn('fecha_actualizacion', data_resp)
+
+        # 6. Verificar auditoría detallada
+        audit_entry = AuditLog.objects.filter(id_registro=case.id).order_by('-fecha_evento').first()
+        self.assertIsNotNone(audit_entry)
+        self.assertEqual(audit_entry.usuario, self.admin)
+        self.assertEqual(audit_entry.accion, 'update')
+        self.assertEqual(audit_entry.modulo, 'casos')
+        self.assertIsNone(audit_entry.datos_anteriores['coordenadas'])
+        self.assertAlmostEqual(audit_entry.datos_nuevos['coordenadas'][0], -73.626456, places=5)
+        self.assertAlmostEqual(audit_entry.datos_nuevos['coordenadas'][1], 4.142123, places=5)
+        self.assertEqual(audit_entry.datos_nuevos['evento'], 'case_location_updated')
+        self.assertEqual(audit_entry.direccion_ip, '190.24.12.85')
+
+        # 7. Modificación de un caso con ubicación existente usando GeoJSON y UUID
+        ok_patch_uuid = self.client.patch(
+            f'/api/v1/admin/cases/{case.id}/location/',
+            {
+                'ubicacion': {
+                    'type': 'Point',
+                    'coordinates': [-73.610000, 4.150000],
+                    'srid': 4326,
+                }
+            },
+            format='json',
+        )
+        self.assertEqual(ok_patch_uuid.status_code, status.HTTP_200_OK)
+        case.refresh_from_db()
+        audit_mod = AuditLog.objects.filter(id_registro=case.id).order_by('-fecha_evento').first()
+        self.assertIsNotNone(audit_mod.datos_anteriores['coordenadas'])
+        self.assertAlmostEqual(audit_mod.datos_anteriores['coordenadas'][0], -73.626456, places=4)
+        self.assertAlmostEqual(audit_mod.datos_nuevos['coordenadas'][0], -73.610000, places=4)
+
+        # 8. Integración con mapa público: aparece inmediatamente en /public/cases/geojson/ y /public/cases/map/
+        self.client.force_authenticate(user=None)
+        geojson_map = self.client.get('/api/v1/public/cases/geojson/')
+        self.assertEqual(geojson_map.status_code, status.HTTP_200_OK)
+        features_map = geojson_map.data.get('features', [])
+        found_feat = next((f for f in features_map if f['properties']['codigo'] == 'PLUS-2026-00006'), None)
+        self.assertIsNotNone(found_feat)
+        self.assertAlmostEqual(found_feat['geometry']['coordinates'][0], -73.610000, places=2)
+
+        # 9. Dos casos con las mismas coordenadas se devuelven como dos Features diferentes
+        self.client.force_authenticate(user=self.admin)
+        case_clone_coords = Case.objects.create(
+            codigo='PLUS-2026-CLONE-GEO',
+            titulo='Otro caso en la misma coordenada',
+            descripcion='Verificación de puntos superpuestos.',
+            tipo_caso=self.category,
+            comunidad=self.community,
+            estado=CaseStatus.get_by_name('pendiente'),
+            usuario=self.citizen,
+            estado_publicacion='aprobado',
+            ubicacion=case.ubicacion,
+        )
+        self.client.force_authenticate(user=None)
+        double_resp = self.client.get('/api/v1/public/cases/map/')
+        feats = [f for f in double_resp.data.get('features', []) if f['properties']['codigo'] in ('PLUS-2026-00006', 'PLUS-2026-CLONE-GEO')]
+        self.assertEqual(len(feats), 2)
+        self.assertNotEqual(feats[0]['id'], feats[1]['id'])
+
+

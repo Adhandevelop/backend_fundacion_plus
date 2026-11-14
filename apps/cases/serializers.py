@@ -21,7 +21,7 @@ from apps.tracking.serializers import (
     PublicCaseStatusHistorySerializer,
     PublicCaseUpdateSerializer,
 )
-from core.gis import make_geojson_point
+from core.gis import make_geojson_point, GeoPointField
 from core.validators import validate_file_safety
 
 
@@ -639,6 +639,54 @@ class AdminCaseDetailSerializer(serializers.ModelSerializer):
             attrs['ubicacion'] = make_geojson_point(lon, lat)
 
         return super().validate(attrs)
+
+
+class AdminCaseLocationUpdateSerializer(serializers.Serializer):
+    latitud = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, allow_null=True)
+    longitud = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, allow_null=True)
+    ubicacion = GeoPointField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        lat = attrs.get('latitud')
+        lon = attrs.get('longitud')
+        ubicacion = attrs.get('ubicacion')
+
+        # Si se envía una de las dos coordenadas numéricas, ambas son obligatorias
+        if (lat is not None and lon is None) or (lat is None and lon is not None):
+            raise serializers.ValidationError({
+                'coordenadas': 'Las coordenadas de latitud y longitud deben enviarse juntas.'
+            })
+
+        if lat is not None and lon is not None:
+            # Validar con GeoPointField para verificar límites numéricos, SRID 4326 y rango Colombia
+            try:
+                point_val = GeoPointField().to_internal_value({'coordinates': [lon, lat], 'srid': 4326})
+                attrs['ubicacion'] = point_val
+            except serializers.ValidationError as exc:
+                raise serializers.ValidationError({'ubicacion': exc.detail if hasattr(exc, 'detail') else str(exc)})
+        elif ubicacion is not None:
+            attrs['ubicacion'] = ubicacion
+        else:
+            raise serializers.ValidationError({
+                'ubicacion': 'Debe proporcionar latitud y longitud, o un objeto de ubicación GeoJSON válido.'
+            })
+
+        return attrs
+
+
+class AdminCaseLocationResponseSerializer(serializers.Serializer):
+    id_caso = serializers.UUIDField(source='id')
+    codigo = serializers.CharField()
+    ubicacion = GeoPointField()
+    latitud = serializers.SerializerMethodField()
+    longitud = serializers.SerializerMethodField()
+    fecha_actualizacion = serializers.DateTimeField()
+
+    def get_latitud(self, obj) -> float | None:
+        return float(obj.exact_latitude) if obj.exact_latitude is not None else None
+
+    def get_longitud(self, obj) -> float | None:
+        return float(obj.exact_longitude) if obj.exact_longitude is not None else None
 
 
 class CaseModerationActionSerializer(serializers.Serializer):

@@ -2,6 +2,7 @@ import csv
 import uuid as uuid_lib
 from django.core.exceptions import PermissionDenied
 from django.core.files.storage import default_storage
+from django.db import transaction
 from django.db.models import Count, Q
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
@@ -32,6 +33,8 @@ from apps.cases.models import (
 )
 from apps.cases.serializers import (
     AdminCaseDetailSerializer,
+    AdminCaseLocationResponseSerializer,
+    AdminCaseLocationUpdateSerializer,
     CaseAssignResponsibleSerializer,
     CaseCategorySerializer,
     CaseContributionSerializer,
@@ -872,6 +875,55 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
             description=f'Actualización administrativa de caso "{case.titulo}" ({case.codigo})',
             request=self.request,
         )
+
+    @extend_schema(
+        request=AdminCaseLocationUpdateSerializer,
+        responses={200: AdminCaseLocationResponseSerializer},
+        summary='Actualizar o asignar la ubicación geográfica de un caso (ADM)',
+        description=(
+            'Permite a un administrador asignar o corregir las coordenadas geográficas de un caso existente. '
+            'Soporta consulta por UUID o por código de radicado (ej. PLUS-2026-00006). '
+            'Acepta {latitud, longitud} o GeoJSON {ubicacion: {type: "Point", coordinates: [lon, lat]}}. '
+            'Valida coordenadas en SRID 4326, rango territorial de Colombia, actualización transaccional '
+            'y auditoría con coordenadas anteriores y nuevas.'
+        ),
+    )
+    @action(detail=True, methods=['patch', 'put'], url_path='location')
+    def location(self, request, pk=None):
+        case = self.get_object()
+        serializer = AdminCaseLocationUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        prev_loc = case.ubicacion
+        prev_coords = (
+            [float(case.exact_longitude), float(case.exact_latitude)]
+            if (case.exact_longitude is not None and case.exact_latitude is not None)
+            else None
+        )
+
+        new_loc = serializer.validated_data['ubicacion']
+        coords = new_loc.get('coordinates') if isinstance(new_loc, dict) else None
+        new_coords = [float(coords[0]), float(coords[1])] if coords else None
+
+        with transaction.atomic():
+            case.ubicacion = new_loc
+            case.save(update_fields=['ubicacion', 'fecha_actualizacion'])
+
+            AuditService.set_db_actor_session(request.user)
+            AuditService.log(
+                actor=request.user,
+                action='update',
+                module='casos',
+                target_model='casos',
+                target_id=case.pk,
+                description=f'Actualización de ubicación geográfica del caso "{case.titulo}" ({case.codigo})',
+                previous_data={'ubicacion': prev_loc, 'coordenadas': prev_coords},
+                new_data={'ubicacion': new_loc, 'coordenadas': new_coords, 'evento': 'case_location_updated'},
+                request=request,
+            )
+
+        resp_serializer = AdminCaseLocationResponseSerializer(case)
+        return Response(resp_serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['get'], url_path='history')
     def history(self, request, pk=None):
