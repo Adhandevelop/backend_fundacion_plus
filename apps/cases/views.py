@@ -860,6 +860,19 @@ class AdminCaseViewSet(viewsets.ModelViewSet):
             request=self.request,
         )
 
+    def perform_update(self, serializer):
+        AuditService.set_db_actor_session(self.request.user)
+        case = serializer.save()
+        AuditService.log(
+            actor=self.request.user,
+            action='update',
+            module='casos',
+            target_model='casos',
+            target_id=case.pk,
+            description=f'Actualización administrativa de caso "{case.titulo}" ({case.codigo})',
+            request=self.request,
+        )
+
     @action(detail=True, methods=['get'], url_path='history')
     def history(self, request, pk=None):
         """ADM-04: GET /api/v1/admin/cases/{case_id}/history/"""

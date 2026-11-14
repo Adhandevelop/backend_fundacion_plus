@@ -556,6 +556,10 @@ class AdminCaseDetailSerializer(serializers.ModelSerializer):
     historial_estados = CaseStatusHistorySerializer(many=True, read_only=True)
     evidencias = CaseEvidenceSerializer(many=True, read_only=True)
     allowed_actions = serializers.SerializerMethodField()
+    latitud = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, write_only=True)
+    longitud = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, write_only=True)
+    exact_latitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, write_only=True)
+    exact_longitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, write_only=True)
 
     class Meta:
         model = Case
@@ -590,6 +594,10 @@ class AdminCaseDetailSerializer(serializers.ModelSerializer):
             'estado_publicacion',
             'moderation_status',
             'ubicacion',
+            'exact_latitude',
+            'exact_longitude',
+            'latitud',
+            'longitud',
             'direccion_referencia',
             'familias_afectadas',
             'meses_afectacion',
@@ -620,6 +628,16 @@ class AdminCaseDetailSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if not self.instance and not attrs.get('estado'):
             attrs['estado'] = CaseStatus.get_default_status()
+
+        lat = attrs.pop('latitud', None)
+        if lat is None:
+            lat = attrs.pop('exact_latitude', None)
+        lon = attrs.pop('longitud', None)
+        if lon is None:
+            lon = attrs.pop('exact_longitude', None)
+        if lat is not None and lon is not None and not attrs.get('ubicacion'):
+            attrs['ubicacion'] = make_geojson_point(lon, lat)
+
         return super().validate(attrs)
 
 

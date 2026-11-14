@@ -1092,3 +1092,72 @@ class CasesMapAndPlatformIntegrationTests(APITestCase):
             for ev in pu.get('evidencias', []):
                 self.assertEqual(ev['audiencia'], 'publico')
                 self.assertEqual(ev['estado_revision'], 'aprobada')
+
+    def test_admin_case_patch_location_for_map_reparation(self):
+        """
+        Verifica la reparación geográfica de expedientes existentes:
+        - Admin puede actualizar un caso sin ubicación enviando latitud/longitud o GeoJSON.
+        - El caso pasa a estar disponible en el GeoJSON del mapa público si está aprobado.
+        """
+        self.client.force_authenticate(user=self.admin)
+        case = Case.objects.create(
+            codigo='RAD-PATCH-GEO-01',
+            titulo='Caso para reparación de coordenadas en mapa',
+            descripcion='Expediente radicado sin coordenadas que requiere asignación geográfica.',
+            tipo_caso=self.category,
+            comunidad=self.community,
+            estado=CaseStatus.get_by_name('pendiente'),
+            usuario=self.citizen,
+            estado_publicacion='aprobado',
+            ubicacion=None,
+        )
+
+        # 1. El mapa público no lo muestra porque no tiene coordenadas
+        self.client.force_authenticate(user=None)
+        map_resp_before = self.client.get('/api/v1/public/cases/map/')
+        self.assertEqual(map_resp_before.status_code, status.HTTP_200_OK)
+        features_before = map_resp_before.data.get('features', [])
+        self.assertFalse(any(f['properties']['codigo'] == 'RAD-PATCH-GEO-01' for f in features_before))
+
+        # 2. Administrador actualiza coordenadas enviando latitud y longitud directas
+        self.client.force_authenticate(user=self.admin)
+        patch_resp = self.client.patch(
+            f'/api/v1/admin/cases/{case.id}/',
+            {
+                'latitud': 3.456789,
+                'longitud': -76.534567,
+            },
+            format='json',
+        )
+        self.assertEqual(patch_resp.status_code, status.HTTP_200_OK)
+        case.refresh_from_db()
+        self.assertIsNotNone(case.ubicacion)
+        self.assertAlmostEqual(float(case.exact_latitude), 3.456789, places=5)
+        self.assertAlmostEqual(float(case.exact_longitude), -76.534567, places=5)
+
+        # 3. Administrador también puede actualizar enviando GeoJSON Point
+        patch_geojson_resp = self.client.patch(
+            f'/api/v1/admin/cases/{case.id}/',
+            {
+                'ubicacion': {
+                    'type': 'Point',
+                    'coordinates': [-76.520000, 3.460000],
+                    'srid': 4326,
+                }
+            },
+            format='json',
+        )
+        self.assertEqual(patch_geojson_resp.status_code, status.HTTP_200_OK)
+        case.refresh_from_db()
+        self.assertAlmostEqual(float(case.exact_latitude), 3.460000, places=4)
+        self.assertAlmostEqual(float(case.exact_longitude), -76.520000, places=4)
+
+        # 4. Ahora el mapa público GeoJSON lo incluye automáticamente
+        self.client.force_authenticate(user=None)
+        map_resp_after = self.client.get('/api/v1/public/cases/map/')
+        self.assertEqual(map_resp_after.status_code, status.HTTP_200_OK)
+        features_after = map_resp_after.data.get('features', [])
+        repaired_feature = next((f for f in features_after if f['properties']['codigo'] == 'RAD-PATCH-GEO-01'), None)
+        self.assertIsNotNone(repaired_feature)
+        self.assertEqual(repaired_feature['geometry']['type'], 'Point')
+
