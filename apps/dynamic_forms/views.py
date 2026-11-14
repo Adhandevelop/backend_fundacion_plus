@@ -63,6 +63,15 @@ class AdminFormularioViewSet(viewsets.ModelViewSet):
             return AdminFormularioCreateUpdateSerializer
         return AdminFormularioDetailSerializer
 
+    def get_object(self):
+        lookup = self.kwargs.get(self.lookup_field)
+        queryset = self.filter_queryset(self.get_queryset())
+        try:
+            uuid_val = uuid.UUID(str(lookup))
+            return get_object_or_404(queryset, pk=uuid_val)
+        except (ValueError, TypeError):
+            return get_object_or_404(queryset, slug__iexact=str(lookup))
+
     def get_queryset(self):
         qs = Formulario.objects.all().prefetch_related('versiones', 'preguntas_borrador')
         search = self.request.query_params.get('search')
@@ -153,14 +162,21 @@ class AdminFormularioViewSet(viewsets.ModelViewSet):
         serializer = AdminFormularioDetailSerializer(formulario)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+    @extend_schema(
+        responses={200: AdminFormularioSubmissionListSerializer(many=True)},
+        summary='Listar envíos/respuestas de un formulario con filtros y paginación (ADM, P25)',
+    )
     @action(detail=True, methods=['get'])
     def submissions(self, request, pk=None):
         formulario = self.get_object()
-        qs = FormularioEnvio.objects.filter(formulario=formulario).select_related('version')
+        qs = FormularioEnvio.objects.filter(formulario=formulario).select_related('version', 'usuario')
 
         version_param = request.query_params.get('version')
         if version_param:
-            qs = qs.filter(version__numero_version=int(version_param))
+            try:
+                qs = qs.filter(version__numero_version=int(version_param))
+            except (ValueError, TypeError):
+                pass
         estado_v = request.query_params.get('estado_vinculacion')
         if estado_v:
             qs = qs.filter(estado_vinculacion=estado_v)
@@ -171,15 +187,32 @@ class AdminFormularioViewSet(viewsets.ModelViewSet):
         if fecha_hasta:
             qs = qs.filter(fecha_envio__lte=fecha_hasta)
 
-        paginator = StandardResultsSetPagination()
-        page = paginator.paginate_queryset(qs.order_by('-fecha_envio'), request)
-        serializer = AdminFormularioSubmissionListSerializer(page, many=True)
-        return paginator.get_paginated_response(serializer.data)
+        ordered_qs = qs.order_by('-fecha_envio')
+        page = self.paginate_queryset(ordered_qs)
+        if page is not None:
+            serializer = AdminFormularioSubmissionListSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
 
-    @action(detail=True, methods=['get'], url_path=r'submissions/(?P<submission_id>[0-9a-f-]+)')
+        serializer = AdminFormularioSubmissionListSerializer(ordered_qs, many=True)
+        return Response({
+            'count': len(serializer.data),
+            'next': None,
+            'previous': None,
+            'results': serializer.data,
+        })
+
+    @extend_schema(
+        responses={200: AdminFormularioSubmissionDetailSerializer},
+        summary='Detalle individual de un envío de formulario (ADM)',
+    )
+    @action(detail=True, methods=['get'], url_path=r'submissions/(?P<submission_id>[^/.]+)')
     def submission_detail(self, request, pk=None, submission_id=None):
         formulario = self.get_object()
-        envio = get_object_or_404(FormularioEnvio, formulario=formulario, pk=submission_id)
+        try:
+            sub_uuid = uuid.UUID(str(submission_id))
+            envio = get_object_or_404(FormularioEnvio, formulario=formulario, pk=sub_uuid)
+        except (ValueError, TypeError):
+            raise ValidationError({'submission_id': 'El identificador de envío debe ser un UUID válido.'})
 
         AuditService.set_db_actor_session(request.user)
         AuditService.log(

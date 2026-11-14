@@ -506,12 +506,12 @@ class FormularioSubmissionService:
             raise ValidationError('El formulario no cuenta con una versión pública vigente.')
 
         ident = validated_data['datos_identificacion']
-        nombres = ident['nombres'].strip()
-        apellidos = ident['apellidos'].strip()
-        correo = ident['correo'].strip().lower()
-        telefono = ident.get('telefono', '').strip()
-        tipo_doc = ident.get('tipo_documento', '').strip()
-        num_doc = ident.get('numero_documento', '').strip()
+        nombres = (ident.get('nombres') or '').strip()
+        apellidos = (ident.get('apellidos') or '').strip()
+        correo = (ident.get('correo') or '').strip().lower()
+        telefono = (ident.get('telefono') or '').strip()
+        tipo_doc = (ident.get('tipo_documento') or '').strip()
+        num_doc = (ident.get('numero_documento') or '').strip()
 
         if version.requiere_documento and (not tipo_doc or not num_doc):
             raise ValidationError('Este formulario exige indicar el tipo y número de documento de identidad.')

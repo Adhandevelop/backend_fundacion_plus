@@ -421,3 +421,101 @@ class DynamicFormsModuleTests(APITestCase):
             usuario=self.admin_user,
         ).first()
         self.assertIsNotNone(audit_entry)
+
+    def test_p25_admin_submissions_list_and_edge_cases(self):
+        """
+        P25: Validación de robustez en GET /api/v1/admin/forms/{id}/submissions/:
+        - Formulario con cero envíos (retorna 200 con results: []).
+        - Envío anónimo pendiente de activación (sin teléfono o con telefono_declarado=None).
+        - Envío vinculado a cuenta ciudadana.
+        - Resolución transparente tanto por UUID como por slug del formulario.
+        - Manejo seguro de 404 para identificadores no existentes (nunca 500).
+        """
+        self.client.force_authenticate(user=self.admin_user)
+
+        # 1. Crear formulario nuevo sin ningún envío
+        form = Formulario.objects.create(
+            slug='arreglo-vial',
+            titulo='Reporte de Arreglo Vial Comunitario',
+            estado=Formulario.Estado.PUBLICADO,
+            creado_por=self.admin_user,
+        )
+        version = FormularioVersion.objects.create(
+            formulario=form,
+            numero_version=1,
+            es_vigente=True,
+        )
+
+        # Caso A: Cero envíos registrados
+        res_zero = self.client.get(f'/api/v1/admin/forms/{form.id}/submissions/?page=1&page_size=20')
+        self.assertEqual(res_zero.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_zero.data['count'], 0)
+        self.assertEqual(res_zero.data['results'], [])
+
+        # También debe funcionar si se consulta por slug
+        res_zero_slug = self.client.get(f'/api/v1/admin/forms/{form.slug}/submissions/?page=1&page_size=20')
+        self.assertEqual(res_zero_slug.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_zero_slug.data['count'], 0)
+        self.assertEqual(res_zero_slug.data['results'], [])
+
+        # Caso B: Envío anónimo pendiente de activación con telefono_declarado=None y sin cédula
+        envio_anon = FormularioEnvio.objects.create(
+            formulario=form,
+            version=version,
+            usuario=None,
+            estado_vinculacion=FormularioEnvio.EstadoVinculacion.PENDIENTE_ACTIVACION,
+            nombres_declarados='Vecino',
+            apellidos_declarados='Anónimo',
+            correo_declarado='vecino.anonimo@barrio.org',
+            telefono_declarado=None,  # Simula NULL en base de datos
+            tipo_documento_declarado='',
+            numero_documento_declarado='',
+        )
+
+        res_anon = self.client.get(f'/api/v1/admin/forms/{form.id}/submissions/?page=1&page_size=20')
+        self.assertEqual(res_anon.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_anon.data['count'], 1)
+        sub_anon_data = res_anon.data['results'][0]
+        self.assertEqual(sub_anon_data['id'], str(envio_anon.id))
+        self.assertEqual(sub_anon_data['estado_vinculacion'], 'pendiente_activacion')
+        self.assertEqual(sub_anon_data['ciudadano']['telefono_enmascarado'], '***')
+        self.assertIsNone(sub_anon_data['ciudadano']['documento_enmascarado'])
+        self.assertIn('@barrio.org', sub_anon_data['ciudadano']['correo_enmascarado'])
+
+        # Caso C: Envío vinculado a cuenta ciudadana con teléfono completo y documento
+        envio_vinc = FormularioEnvio.objects.create(
+            formulario=form,
+            version=version,
+            usuario=self.admin_user,
+            estado_vinculacion=FormularioEnvio.EstadoVinculacion.VINCULADO,
+            nombres_declarados='Ciudadano',
+            apellidos_declarados='Ejemplar',
+            correo_declarado='ciudadano.ejemplar@plus.org',
+            telefono_declarado='3109876543',
+            tipo_documento_declarado='CC',
+            numero_documento_declarado='1020304050',
+        )
+
+        res_two = self.client.get(f'/api/v1/admin/forms/{form.id}/submissions/?page=1&page_size=20')
+        self.assertEqual(res_two.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_two.data['count'], 2)
+        results = res_two.data['results']
+        ids = [r['id'] for r in results]
+        self.assertIn(str(envio_anon.id), ids)
+        self.assertIn(str(envio_vinc.id), ids)
+
+        # Verificar enmascaramiento correcto de teléfono y documento
+        sub_vinc_data = next(r for r in results if r['id'] == str(envio_vinc.id))
+        self.assertEqual(sub_vinc_data['ciudadano']['telefono_enmascarado'], '310****543')
+        self.assertEqual(sub_vinc_data['ciudadano']['documento_enmascarado'], 'CC ***4050')
+
+        # Caso D: Consulta con slug para formulario con envíos
+        res_slug = self.client.get(f'/api/v1/admin/forms/arreglo-vial/submissions/?page=1&page_size=20')
+        self.assertEqual(res_slug.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_slug.data['count'], 2)
+
+        # Caso E: Consulta con identificador no existente retorna 404 limpio
+        res_404_slug = self.client.get('/api/v1/admin/forms/formulario-inexistente/submissions/')
+        self.assertEqual(res_404_slug.status_code, status.HTTP_404_NOT_FOUND)
+        res_404_uuid = self.client.get('/api/v1/admin/forms/00000000-0000-0000-0000-000000000000/submissions/')
+        self.assertEqual(res_404_uuid.status_code, status.HTTP_404_NOT_FOUND)

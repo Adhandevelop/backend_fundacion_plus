@@ -203,9 +203,9 @@ class FormularioEnvio(models.Model):
     nombres_declarados = models.CharField(max_length=150)
     apellidos_declarados = models.CharField(max_length=150)
     correo_declarado = models.EmailField(max_length=254, db_index=True)
-    telefono_declarado = models.CharField(max_length=30, blank=True, default='')
-    tipo_documento_declarado = models.CharField(max_length=20, blank=True, default='')
-    numero_documento_declarado = models.CharField(max_length=50, blank=True, default='')
+    telefono_declarado = models.CharField(max_length=30, null=True, blank=True, default='')
+    tipo_documento_declarado = models.CharField(max_length=20, null=True, blank=True, default='')
+    numero_documento_declarado = models.CharField(max_length=50, null=True, blank=True, default='')
 
     aceptacion_legal = models.ForeignKey(
         'communications.LegalAcceptance',

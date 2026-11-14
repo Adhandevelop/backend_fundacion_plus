@@ -192,9 +192,9 @@ class AdminFormularioSubmissionListSerializer(serializers.ModelSerializer):
 
     def get_ciudadano(self, obj) -> dict:
         def mask_email(email):
-            if not email or '@' not in email:
-                return email
-            parts = email.split('@')
+            if not email or '@' not in str(email):
+                return str(email or '')
+            parts = str(email).split('@')
             user_part = parts[0]
             masked_user = (user_part[:2] + '*' * max(1, len(user_part) - 4) + user_part[-2:]) if len(user_part) > 4 else (user_part[:1] + '***')
             return f'{masked_user}@{parts[1]}'
@@ -202,14 +202,28 @@ class AdminFormularioSubmissionListSerializer(serializers.ModelSerializer):
         def mask_doc(doc, tipo):
             if not doc:
                 return None
-            masked = f'***{doc[-4:]}' if len(doc) >= 4 else '***'
-            return f'{tipo} {masked}'.strip()
+            clean_doc = str(doc).strip()
+            if not clean_doc:
+                return None
+            masked = f'***{clean_doc[-4:]}' if len(clean_doc) >= 4 else '***'
+            tipo_prefix = f'{tipo} ' if tipo else ''
+            return f'{tipo_prefix}{masked}'.strip()
+
+        def mask_phone(phone):
+            if not phone:
+                return '***'
+            clean_phone = str(phone).strip()
+            if not clean_phone:
+                return '***'
+            if len(clean_phone) >= 7:
+                return f'{clean_phone[:3]}****{clean_phone[-3:]}'
+            return '***'
 
         return {
-            'nombres': obj.nombres_declarados,
-            'apellidos': obj.apellidos_declarados,
+            'nombres': obj.nombres_declarados or '',
+            'apellidos': obj.apellidos_declarados or '',
             'correo_enmascarado': mask_email(obj.correo_declarado),
-            'telefono_enmascarado': f'{obj.telefono_declarado[:3]}****{obj.telefono_declarado[-3:]}' if len(obj.telefono_declarado) >= 7 else '***',
+            'telefono_enmascarado': mask_phone(obj.telefono_declarado),
             'documento_enmascarado': mask_doc(obj.numero_documento_declarado, obj.tipo_documento_declarado),
         }
 
